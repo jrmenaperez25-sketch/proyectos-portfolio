@@ -4,14 +4,18 @@ library(readxl)
 options(stringsAsFactors = FALSE)
 
 bundle_path <- "models/model_bundle.rds"
-data_path <- "../data/datos_imputados_knn.xlsx"
+data_path <- if (file.exists("../data/datos_imputados_knn.xlsx")) {
+  "../data/datos_imputados_knn.xlsx"
+} else {
+  "/data/datos_imputados_knn.xlsx"
+}
 
 if (!file.exists(bundle_path)) {
   stop("No se encontro models/model_bundle.rds. Ejecuta antes train_models.R.")
 }
 
 if (!file.exists(data_path)) {
-  stop("No se encontro ../data/datos_imputados_knn.xlsx.")
+  stop("No se encontro data/datos_imputados_knn.xlsx.")
 }
 
 bundle <- readRDS(bundle_path)

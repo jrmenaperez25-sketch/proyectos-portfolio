@@ -11,6 +11,7 @@ Miniweb en `HTML/CSS/JS` con backend en `R` para:
 - `api/train_models.R`: reentrena y guarda los modelos en `models/model_bundle.rds`
 - `api/plumber.R`: expone la API con `/metadata`, `/predict` y `/health`
 - `web/index.html`: interfaz principal
+- `web/config.js`: configuracion local de la URL de la API
 - `web/app.js`: logica del formulario, peticiones y PDF
 - `web/styles.css`: estilos
 
@@ -65,6 +66,8 @@ pr$run(host = "127.0.0.1", port = 8000)
 
 Abre `web/index.html` en el navegador.
 
+Antes, crea `web/config.js` a partir de `web/config.example.js`.
+
 Si prefieres servirla localmente:
 
 ```powershell
@@ -73,6 +76,90 @@ python -m http.server 5500
 ```
 
 Luego entra en `http://127.0.0.1:5500`.
+
+## Para publicarla con enlace
+
+GitHub por si solo no basta, porque la prediccion depende de una API en `R`.
+
+Necesitas desplegar:
+
+- el frontend estatico `web/`
+- la API `plumber` de `api/`
+
+La web ya esta preparada para eso: cuando publiques la API, solo tendras que poner su URL en `web/config.js`.
+
+Ejemplo:
+
+```js
+window.APP_CONFIG = {
+  API_BASE_URL: "https://tu-api-publica.onrender.com"
+};
+```
+
+## Despliegue recomendado
+
+### Backend en Render
+
+El backend ya incluye:
+
+- `Dockerfile`
+- `api/start-api.R`
+
+Pasos en Render:
+
+1. Crea un `Web Service`.
+2. Conecta tu repositorio de GitHub.
+3. Usa estos valores:
+   - `Root Directory`: `miniweb-marocars`
+   - `Language`: `Docker`
+4. Despliega.
+
+Render indica que los `Web Services` deben escuchar en `0.0.0.0` y usar el puerto esperado por la plataforma. En este proyecto eso ya queda resuelto en `start-api.R`, que toma `PORT` y arranca `plumber` sobre `0.0.0.0`.[Render Web Services](https://render.com/docs/web-services) [Render Docker](https://render.com/docs/docker)
+
+Cuando el servicio quede desplegado, prueba:
+
+- `https://tu-servicio.onrender.com/health`
+- `https://tu-servicio.onrender.com/metadata`
+
+### Frontend en GitHub Pages
+
+El repo ya incluye un workflow:
+
+- `.github/workflows/miniweb-pages.yml`
+
+Pasos en GitHub:
+
+1. Ve a `Settings -> Pages`.
+2. En `Source`, selecciona `GitHub Actions`.
+3. Haz `push` al repo.
+
+GitHub Pages publica sitios estaticos directamente desde los archivos del repositorio mediante un flujo de build/deploy, asi que encaja bien con `web/`.[GitHub Pages docs](https://docs.github.com/pages/getting-started-with-github-pages/what-is-github-pages)
+
+## Orden recomendado de publicacion
+
+1. Desplegar primero la API en Render.
+2. Copiar la URL publica de Render.
+3. Cambiar `web/config.js` para que apunte a esa URL.
+4. Hacer `git push`.
+5. Dejar que GitHub Pages publique la web.
+
+## Nota sobre `config.js`
+
+Para local:
+
+```js
+window.APP_CONFIG = {
+  API_BASE_URL: "http://127.0.0.1:8000"
+};
+```
+
+Para produccion:
+
+```js
+window.APP_CONFIG = {
+  API_BASE_URL: "https://tu-servicio.onrender.com"
+};
+```
 
 ## Notas del comportamiento
 
