@@ -1,0 +1,228 @@
+================================================================================
+CONTEXTO DEL PROYECTO — ANÁLISIS MULTIVARIANTE DE SUELOS AFRICANOS
+Asignatura: Análisis, Monitorización y Diagnóstico de Procesos Multivariantes (UPV)
+Alumno: José Ramón Mena Pérez
+================================================================================
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. DATASET
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Africa Soil Property Prediction Challenge (Kaggle 2014).
+Fichero: training.csv (una carpeta por encima de PROYECTO_DEFINITIVO, es decir ../training.csv)
+
+Observaciones: 1157 muestras de suelo africano
+  - Topsoil: 581  |  Subsoil: 576
+  - Organizadas en 565 pares geográficos completos (misma ubicación, ambas profundidades),
+    11 singletons y 4 grupos >2. La clave de emparejamiento son las variables auxiliares
+    redondeadas a 6 decimales concatenadas.
+
+Variables X — espectrales (FTIR/MIR):
+  - 3578 variables: columnas m600 a m7498 (número de onda en cm⁻¹)
+  - Rango: 600–7498 cm⁻¹
+  - La absorbancia mide log(I₀/I): cuánta luz fue absorbida a cada frecuencia
+  - 3 regiones espectrales de color estándar en todas las figuras:
+      < 2000 cm⁻¹  → verde  '#6ACC65'
+      2000–4000     → rojo   '#D65F5F'
+      > 4000        → azul   '#4878CF'
+
+Variables auxiliares (15):
+  BSAN, BSAS, BSAV, CTI, ELEV, EVI, LSTD, LSTN, REF1, REF2, REF3, REF7, RELI, TMAP, TMFI
+  Agrupadas en bloques temáticos:
+    Topografía: ELEV, RELI, CTI
+    Clima:      TMAP, TMFI
+    LST:        LSTD, LSTN
+    Reflectancia: REF1, REF2, REF3, REF7
+    Albedo:     BSAN, BSAS, BSAV
+    Vegetación: EVI
+
+Variables respuesta (5 targets):
+  Ca, P, pH, SOC, Sand
+  Nota: P (Fósforo) excluido del PLS conjunto por exceso de ceros y asimetría extrema (skew=7.45)
+  El PLS se hace para: Ca, pH, SOC, Sand
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. ESTRUCTURA DE ARCHIVOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Directorio raíz: CONTEXTO_PROYECTO/
+
+CONTEXTO_PROYECTO/
+├── training.csv                          ← dataset principal
+├── CONTEXTO_NUEVA_CONVERSACION.txt       ← este fichero
+│
+├── PROYECTO_DEFINITIVO/                  ← scripts del trabajo final
+│   ├── eda.py                            → figures/preprocesado/eda_spectrum.png
+│   ├── pca.py                            → figures/preprocesado/ (6 figuras)
+│   ├── pca_clean.py                      → figures/modelo_limpio/ (6 figuras)
+│   ├── memoria.tex                       ← documento LaTeX (~15 pág, INCOMPLETO)
+│   │
+│   └── figures/
+│       ├── preprocesado/                 ← análisis sobre n=1157 (datos originales)
+│       │   ├── eda_spectrum.png
+│       │   ├── pca_cv.png
+│       │   ├── pca_scores.png
+│       │   ├── pca_loading1.png
+│       │   ├── pca_loading2.png
+│       │   ├── pca_loading_zoom.png
+│       │   └── pca_outlier.png
+│       │
+│       └── modelo_limpio/               ← modelo tras eliminar obs 432 (n=1156)
+│           ├── pca_cv.png
+│           ├── pca_scores.png
+│           ├── pca_loading1.png
+│           ├── pca_loading2.png
+│           ├── pca_loading_zoom.png
+│           └── pca_outlier.png
+│
+└── PLS_CONJUNTO/
+    ├── pls_graficas_apuntes.py           ← PLS2 (Ca, pH, SOC, Sand) con CV correcto
+    └── vip.py                           ← VIP del modelo PLS2
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. METODOLOGÍA APLICADA Y DECISIONES CLAVE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+EDA (eda.py)
+  - Solo espectro medio ± 1 desviación típica con bandas de color por región espectral
+  - No hay EDA de targets ni de auxiliares (no solicitado aún)
+
+ESCALADO
+  - PCA: autoscaling (StandardScaler) solo sobre variables espectrales
+  - PLS: autoscaling sobre X (espectrales + auxiliares) e Y por separado
+  - CRÍTICO: el scaler se ajusta SOLO en el train de cada fold y se aplica al test
+    (sin data leakage)
+
+PCA (pca.py)
+  - Modelo completo: PCA(n_components=50) sobre X_sc autoscalado
+  - CV: GroupKFold(n_splits=10) agrupando por pares geográficos (Topsoil+Subsoil
+    de la misma ubicación van siempre al mismo fold)
+  - Q² = 1 - PRESS/TSS calculado fold a fold (scaler reajustado en cada fold)
+  - A=2 componentes para T² y SCR (modelo interpretativo)
+
+  T² de Hotelling:
+    T²_i = Σ_a (t_ia / √λ_a)²  para a=1,2
+    UCL₉₅% = [2(n-1)/(n-2)] × F(0.95, 2, n-2)
+    Umbral de eliminación: T² > 3 × UCL₉₅%
+
+  Score plot — elipse:
+    Semi-ejes: √(UCL_score × λ_a)   donde UCL_score = [2(n-1)/(n-2)] × F(0.95,2,n-2)
+    Una sola elipse para todos los datos, centrada en (0,0), ángulo=0
+
+  SCR (Q residual):
+    SCR_i = ||x_i - x̂_i||²
+    θ₁ = total_var - Σ_{a=1}^{A} λ_a   ← EXACTO via traza (no solo 48 autovalores)
+    θ₂ = Σ_{a>A} λ_a²  (de los 50 calculados)
+    h₀ = 1 - 2θ₁θ₃/(3θ₂²)
+    IMPORTANTE: para MIR con A=2, h₀ < 0 (espectro de autovalores muy heterogéneo)
+    → Se usa aproximación chi-cuadrado de Box (1954): UCL = (θ₂/θ₁) × χ²(0.95, θ₁²/θ₂)
+    La fórmula de Jackson-Mudholkar falla cuando h₀ ≤ 0 (da UCL < θ₁, imposible)
+
+  Proyección auxiliares en loading plot:
+    r_j = corr(aux_j, t_a)  → correlación de Pearson en [-1,1]
+    Escaladas para visualización: aux_p = r × [max(|p1|,|p2|) / max(|r|)]
+    Son suplementarias: NO forman parte del modelo PCA, solo se proyectan
+
+  Loading plot — marcadores:
+    Cada 50 cm⁻¹ con etiqueta del número de onda (fontsize=5)
+    Colores por región espectral
+    Trayectoria de 7498→600 cm⁻¹ con flechas cada ~350 puntos
+
+  Zoom plots (4 subplots):
+    Selección por dirección diagonal (top 20% de puntos por dirección):
+      Superior derecha:   puntos con mayor  p1+p2
+      Inferior derecha:   puntos con mayor  p1-p2
+      Inferior izquierda: puntos con mayor -p1-p2
+      Zona TMAP/ELEV:     caja centrada entre TMAP y ELEV, radio 4× distancia entre ellos
+    Etiquetas cada 10 cm⁻¹ en los zooms
+    También muestra variables auxiliares (diamantes) si caen dentro de la caja
+
+  Outlier removal iterativo (pca_clean.py):
+    Elimina una a una las observaciones con T² > 3×UCL₉₅% (A=2)
+    Reajusta scaler y PCA en cada iteración con los datos restantes
+    Resultado: obs 432 eliminada → n=1156 (convergencia en 2 iteraciones)
+    obs 294 tiene SCR > 3×UCL pero NO se elimina (solo T² dispara el proceso)
+
+RESULTADOS PCA
+  n=1157 (preprocesado):
+    PC1: ~76.5%  PC2: ~9.5%  →  PC1+PC2 ≈ 86%
+    Q²(A=1)=0.761  Q²(A=2)=0.855  Q²(A=3)=0.932
+    UCL_T2 = 6.01   (F-distribution, A=2)
+    UCL_SCR = 1301  (chi² Box 1954, θ₁=509, h₀=-0.019)
+    3×UCL_T2 = 18.04 → anomalías T²: obs 432
+    3×UCL_SCR = 3903 → anomalías SCR: obs 294
+
+  n=1156 (modelo limpio):
+    Prácticamente idéntico al anterior (solo se eliminó 1 obs)
+
+PLS2 (PLS_CONJUNTO/pls_graficas_apuntes.py)
+  - PLSRegression con autoscaling dentro de cada fold (sin leakage)
+  - GroupKFold(10) por pares geográficos
+  - Modelo PLS2 (un solo espacio latente para Ca, pH, SOC, Sand simultáneamente)
+  - X = espectrales + auxiliares (concatenados)
+  - Resultados con A óptimo global = 12 LVs:
+      Ca:   Q²=0.847  (óptimo individual ~12 LVs)
+      pH:   Q²=0.707  (óptimo individual ~10 LVs)
+      SOC:  Q²=0.759  (óptimo individual ~6 LVs)
+      Sand: Q²=0.645  (óptimo individual ~5 LVs)
+  - Figuras generadas (A1-A7): scores T vs U, inner relation, loadings, weights W*,
+    pred vs real
+
+VIP (PLS_CONJUNTO/vip.py)
+  - Calculado sobre modelo PLS2 ajustado en TODOS los datos (interpretativo, no CV)
+  - A=12 LVs (óptimo global)
+  - Fórmula correcta con W* (x_rotations_, NO x_weights_):
+    VIP_k = sqrt(p × Σ_a[(w*_ka/||w*_a||)² × SS_a] / Σ_a(SS_a))
+    SS_a = t_a'·t_a × q_a'·q_a
+  - Figuras: B1 (VIP espectral), B2 (VIP auxiliares barras), B3 (combinado)
+  - Variables espectrales relevantes: principalmente región 2000-4000 cm⁻¹
+  - Variables auxiliares con VIP>1: TMAP y ELEV (temperatura y elevación)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. ESTADO DE memoria.tex
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Documento LaTeX de ~15 páginas en español.
+Compilar desde PROYECTO_DEFINITIVO/ con lualatex o pdflatex.
+
+Secciones existentes:
+  1. Introducción — descripción del dataset, objetivos
+  2. EDA — espectro medio (solo eda_spectrum.png)
+  3. PCA — autoscaling, CV, scores, loadings, proyección auxiliares, T²/SCR
+  4. PLS — PLACEHOLDER (% ─── COMPLETAR ───)
+
+PENDIENTE en memoria.tex:
+  - Actualizar rutas de figuras: ahora todas están en figures/preprocesado/ o figures/modelo_limpio/
+  - Posiblemente referencias antiguas a: pca_kaiser, pca_t2, pca_scr, eda_auxiliares (ELIMINADAS)
+  - Nueva figura: pca_loading_zoom.png
+  - Completar sección PLS con resultados, figuras A1-A7, B1-B3 de VIP
+  - Decidir si incluir resultados modelo limpio (n=1156) o solo preprocesado
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. CONVENCIONES Y PREFERENCIAS DEL USUARIO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Al crear figuras nuevas en una carpeta, eliminar las antiguas de la carpeta anterior
+- Seguir los apuntes de la asignatura para las fórmulas (F-distribution para T²,
+  no chi² para T²; chi² Box 1954 para SCR cuando h₀<0)
+- GroupKFold es obligatorio para respetar la estructura de pares geográficos
+- El scaler SIEMPRE se ajusta solo en train, nunca en test
+- Idioma de texto en figuras y documento: español
+- Figuras: dpi=150, bbox_inches='tight'
+- Colores espectrales: <2000 verde, 2000-4000 rojo, >4000 azul (siempre iguales)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. TAREAS PENDIENTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INMEDIATO:
+  [ ] Completar sección PLS en memoria.tex (usuario lo irá dictando)
+  [ ] Actualizar referencias a figuras en memoria.tex (rutas a preprocesado/)
+  [ ] Verificar que memoria.tex compila correctamente con las figuras actuales
+
+POSIBLE:
+  [ ] Análisis PLS individual por target (comparar con PLS2)
+  [ ] MB-PLS (Multi-Block PLS) si el usuario lo solicita
+  [ ] Tabla resumen con R²X, Q², VIP en el documento
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. DEPENDENCIAS PYTHON
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+pandas, numpy, matplotlib, sklearn (StandardScaler, PCA, PLSRegression, GroupKFold,
+KMeans), scipy.stats (f, norm, chi2)
+================================================================================

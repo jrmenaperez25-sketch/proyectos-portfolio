@@ -1,0 +1,1043 @@
+---
+title: "Análisis Predictivo del Mercado de Coches de Segunda Mano en Marruecos"
+subtitle: "Aplicación de técnicas de minería de datos al dataset MUCars-2024"
+author:
+  - "Lorena Saraí Torres Gonzales"
+  - "José Ramón Mena Pérez"
+  - "Salvador Naharros Pérez"
+date: "Grupo 6 · Minería de Datos · Mayo 2026"
+lang: es
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+bibliography: refs.bib
+nocite: |
+  @readxl
+  @writexl
+  @pROC
+  @rpart
+  @rpartplot
+  @DMwR2
+  @kernlab
+  @klaR
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+options(encoding = "UTF-8")
+library(ggplot2)
+dir.create("graficas", showWarnings = FALSE)
+```
+
+# Resumen
+
+El presente trabajo aplica técnicas de minería de datos sobre el dataset **MUCars-2024**, formado por 71.369 anuncios de coches de segunda mano publicados en Marruecos y recopilados mediante *web scraping*. Tras un preprocesamiento exhaustivo —corrección de errores del *scraper*, transformación de variables e imputación de valores faltantes mediante KNN— se obtiene una base lista para el análisis. El análisis exploratorio y el PCA revelan que la antigüedad y el kilometraje son los principales ejes de variabilidad del precio, con los extras de equipamiento y en menor medida la potencia fiscal formando un eje secundario ortogonal. Se comparan cinco modelos de clasificación para predecir si un vehículo ha tenido un único propietario, y tres modelos de regresión para estimar el precio. En clasificación, la regresión logística ofrece el mejor balance entre rendimiento e interpretabilidad. En regresión, el *Random Forest* supera claramente al modelo lineal y al árbol CART en todas las métricas de error. Los resultados confirman que la antigüedad y el kilometraje son los determinantes fundamentales del precio en este mercado.
+
+# Introducción
+
+El mercado de vehículos de segunda mano en Marruecos ocupa un lugar central en la economía del país. Las elevadas tasas arancelarias sobre la importación de vehículos nuevos y una flota media de considerable antigüedad hacen que la mayoría de las transacciones de movilidad privada se realicen en el mercado de ocasión, generando además empleo en sectores como la venta, el mantenimiento y la financiación [@Tabarnoust2025]. En este contexto, la fijación del precio de un vehículo usado es una tarea compleja: el vendedor particular carece de referencias objetivas de mercado, el comprador no puede verificar fácilmente si el precio publicado es razonable, y la información sobre el estado real del vehículo juega un papel crucial en la decisión final.
+
+El dataset empleado, **MUCars-2024** [@Tabarnoust2025], fue recopilado mediante *web scraping* automatizado de las principales plataformas marroquíes de compraventa de vehículos. Contiene **71.369 anuncios** con **15 variables** que cubren las características técnicas del vehículo (antigüedad, kilometraje, tipo de combustible, potencia fiscal, número de puertas, tipo de cambio), su estado de conservación, la procedencia geográfica, el historial de propiedad (`First.Owner`), la dotación de equipamiento y el precio de venta en dírhams marroquíes (MAD).
+
+# Objetivos
+
+El objetivo principal de este trabajo es **evaluar y comparar distintas técnicas de minería de datos supervisadas y no supervisadas** para extraer conocimiento útil del mercado marroquí de vehículos de segunda mano. En particular, se persiguen dos objetivos predictivos:
+
+1. **Predicción del precio de venta** (`Price`, variable continua): Construir y comparar modelos capaces de estimar el precio de mercado de un vehículo a partir de sus características técnicas y estado. Este problema responde directamente a la incertidumbre a la que se enfrenta cualquier comprador al evaluar si el precio de un anuncio es justo: disponer de un modelo predictivo permite comparar el precio publicado con el valor esperado según las condiciones del vehículo, detectando sobreprecios o gangas de forma objetiva.
+
+2. **Clasificación del primer propietario** (`First.Owner`, variable binaria): Identificar qué características distinguen los vehículos que han tenido un único dueño, información que influye directamente en la percepción de valor y el precio que el mercado está dispuesto a pagar.
+
+# Metodología y diseño experimental
+
+Todo el análisis se ha realizado en **R** [@citaR] y **RStudio** [@rstudio], trabajando con ficheros en formato **Microsoft Excel** [@excel], con una metodología organizada en cinco etapas secuenciales:
+
+1. **Preprocesamiento y limpieza**: Corrección de errores específicos del *scraper*, transformación de variables (año → antigüedad, intervalos de kilometraje → punto medio, texto libre de equipamiento → contadores numéricos), eliminación de duplicados y de filas con exceso de valores faltantes.
+
+2. **Imputación KNN**: Tratamiento de valores faltantes en las variables predictoras mediante `kNN` del paquete `VIM` [@VIM] con `k = 5`. Las variables objetivo (`Price` y `First.Owner`) no se imputan.
+
+3. **Análisis exploratorio (EDA)**: Distribuciones univariantes con comparación antes/después de la imputación para verificar que KNN no distorsiona las distribuciones originales.
+
+4. **Análisis no supervisado (PCA)**: Reducción de dimensionalidad con `FactoMineR` [@FactoMineR] y visualización con `factoextra` [@factoextra] sobre el subconjunto de observaciones con precio conocido. `Condition` se incluye como variable suplementaria cualitativa.
+
+5. **Modelos supervisados**: Regresión (LM con selección *backward* por AIC mediante `step()`, CART con regla 1-SE [@Breiman1984], *Random Forest* [@randomForest]) y clasificación (regresión logística, CART, *Random Forest*, SVM lineal y Naive Bayes) gestionados con `caret` [@caret]. La selección de variables tanto en el LM como en la regresión logística se realiza con `step(direction="backward")` por AIC. La evaluación se realiza mediante *hold-out* 75/25 estratificado. La interpretabilidad del *Random Forest* se aborda con ALE y LIME mediante el paquete `iml` [@iml], y la curva REC con `auditor` [@auditor]. Las visualizaciones se han generado con `ggplot2` [@ggplot2].
+
+Los métodos y técnicas aplicados siguen los contenidos de la asignatura [@debon_apuntes]. El desarrollo y revisión del código ha contado con el apoyo de herramientas de asistencia como Claude Code [@claudecode] y OpenAI Codex [@codex].
+
+# Resultados
+
+## Limpieza, transformación e imputación de datos
+
+### Descripción inicial del dataset
+
+El dataset MUCars-2024 contiene **71.369 observaciones** y **15 variables**. La descripción detallada de cada variable, su tipo y rol en el análisis se recoge en el Anexo II.
+
+### Corrección y transformación de variables
+
+El dataset original presentaba diversas incidencias derivadas del *web scraping*: valores en francés, kilometrajes codificados como intervalos de texto, precios capturados aparentemente como números de teléfono u otro tipo de número muy largo no acorde con la variable que buscaba capturar, ciudades en árabe y códigos numéricos de marca.
+
+```{r carga}
+library(readxl); library(writexl)
+
+datos <- as.data.frame(read_excel("01_morocco_cars_original.xlsx"))
+datos$Brand           <- as.character(datos$Brand)
+datos$Model           <- as.character(datos$Model)
+datos$Number.of.Doors <- as.character(datos$Number.of.Doors)
+
+n0 <- nrow(datos)
+```
+
+#### Corrección manual de errores de campo
+
+El proceso de *web scraping* introdujo en un caso un valor de kilometraje (`"35 000 - 39 999"`) en el campo `Fuel` en una de las observaciones(detectado con la previsualización en Excel). Se corrige antes de cualquier transformación.
+
+```{r correcciones-manuales}
+idx_fuel_error <- which(datos$Fuel == "35 000 - 39 999")
+datos$Mileage[idx_fuel_error] <- "35 000 - 39 999"
+datos$Fuel[idx_fuel_error]    <- NA
+```
+
+#### Transformaciones de variables numéricas
+
+Se calculó la antigüedad (`Age = 2026 − Year`), el punto medio del intervalo de kilometraje y la potencia fiscal como entero, así como las observaciones que contenían el PLUS en cada una de las variables.
+
+```{r numericas}
+datos$Year[trimws(datos$Year) == "1980 ou plus ancien"] <- "1979"
+datos$Age  <- 2026L - as.integer(datos$Year)
+datos$Year <- NULL
+
+datos$Mileage[datos$Mileage == "Plus de 500 000"] <- "550000"
+m <- gsub(" ", "", datos$Mileage)
+datos$Mileage_mid <- ifelse(grepl("-", m, fixed = TRUE),
+  (suppressWarnings(as.numeric(sub("-.*", "", m))) +
+   suppressWarnings(as.numeric(sub(".*-", "", m)))) / 2,
+  suppressWarnings(as.numeric(m)))
+datos$Mileage <- NULL
+
+datos$Fiscal.Power[trimws(datos$Fiscal.Power) == "Plus de 41 CV"] <- "42 CV"
+datos$Fiscal_Power_num <- suppressWarnings(as.integer(gsub(" CV", "", datos$Fiscal.Power)))
+datos$Fiscal.Power     <- NULL
+```
+
+```{r categoricas}
+datos$Fuel[datos$Fuel == "Electrique"] <- "Electric"
+datos$Fuel[!datos$Fuel %in% c("Diesel", "Electric", "Hybrid", "LPG", "Petrol")] <- NA
+
+arab <- c("أكادير"="Agadir", "الجديدة"="El Jadida", "الدار البيضاء"="Casablanca",
+          "الرباط"="Rabat",  "القنيطرة"="Kénitra",   "المحمدية"="Mohammedia",
+          "الناظور"="Nador", "تطوان"="Tétouan",     "تمارة"="Temara",
+          "طنجة"="Tanger",   "فاس"="Fès",            "مراكش"="Marrakech",
+          "مكناس"="Meknès",  "وجدة"="Oujda")
+en_arab <- datos$Location %in% names(arab)
+datos$Location[en_arab] <- arab[datos$Location[en_arab]]
+
+datos$Brand[datos$Brand == "mini"]   <- "MINI"
+datos$Brand[datos$Brand == "lancia"] <- "Lancia"
+otros <- datos$Brand == "Autres" | grepl("^[0-9]+$", datos$Brand) | is.na(datos$Brand)
+datos$Brand[otros] <- "Otros"
+datos$Model[otros] <- "Otros"
+no_otros <- datos$Model != "Otros"
+datos$Model[no_otros] <- gsub("(^|\\s)(\\S)", "\\1\\U\\2",
+                               tolower(gsub("_", " ", datos$Model[no_otros])), perl = TRUE)
+
+datos$BrandModel <- paste(datos$Brand, datos$Model)
+datos$Brand <- NULL
+datos$Model <- NULL
+```
+
+#### Corrección de precios anómalos y eliminación de duplicados
+
+Los precios inferiores a 5.000 MAD y superiores a 1.500.000 MAD son errores del *scraper* y se marcan como `NA`(superan con creces el percentil 99), son los que especulamos que son números de teléfonos), preservando la información restante de la observación para los modelos de clasificación, donde `Price` no actúa como predictor.
+
+```{r price-duplicados}
+datos$Price[!is.na(datos$Price) & datos$Price < 5000]    <- NA
+datos$Price[!is.na(datos$Price) & datos$Price > 1500000] <- NA
+
+n_antes_dup <- nrow(datos)
+datos       <- datos[!duplicated(datos), ]
+n1          <- nrow(datos)
+```
+
+#### Extracción de equipamiento y filtrado de valores faltantes
+
+La variable `Equipment` se transformó en dos contadores: `n_extras_seguridad` (0–4) y `n_extras_tecnologia` (0–12) ya que consideramos que son las categorizaciones más apropiadas para las descripciones que aparecen en nuestra base de datos. Se eliminaron las filas con 3 o más valores faltantes.
+
+```{r equipment-nas}
+seg <- c("Airbags", "ABS", "ESP", "Central Locking")
+tec <- c("Electric Windows", "CD/MP3/Bluetooth", "Alloy Wheels", "Air Conditioning",
+         "Rear Camera", "Leather Seats", "Speed Limiter", "Cruise Control",
+         "Parking Sensors", "Onboard Computer", "Navigation System/GPS", "Sunroof")
+contar <- function(txt, kw) if (is.na(txt)) 0L else sum(sapply(kw, grepl, x = txt, fixed = TRUE))
+datos$n_extras_seguridad  <- sapply(datos$Equipment, contar, kw = seg)
+datos$n_extras_tecnologia <- sapply(datos$Equipment, contar, kw = tec)
+datos$Equipment <- NULL
+
+n_ant <- nrow(datos)
+datos <- datos[rowSums(is.na(datos)) < 3, ]
+n2    <- nrow(datos)
+```
+
+#### Resumen del proceso de limpieza
+
+```{r resumen-limpieza, echo=FALSE}
+resumen <- data.frame(
+  Etapa = c("Dataset original", "− Duplicados exactos", "− Filas con 3 o más NAs", "= Dataset limpio"),
+  Filas = c(n0, -(n0 - n1), -(n1 - n2), n2)
+)
+knitr::kable(resumen, caption = "Tabla 2. Reducción del dataset a lo largo de la limpieza.")
+
+# Convertir a factor para calcular NAs correctamente
+for (col in names(datos)) {
+  if (is.character(datos[[col]])) datos[[col]] <- as.factor(datos[[col]])
+}
+
+nas_col <- sort(colSums(is.na(datos)), decreasing = TRUE)
+nas_col <- nas_col[nas_col > 0]
+df_nas  <- data.frame(
+  Variable   = names(nas_col),
+  NAs        = as.integer(nas_col),
+  Porcentaje = paste0(round(nas_col / n2 * 100, 1), " %")
+)
+knitr::kable(df_nas, caption = "Tabla 3. Valores faltantes pendientes de imputación.")
+```
+
+**Nota sobre `Price`:** su porcentaje de valores faltantes supera el umbral habitual del 20% a partir del cual se recomienda reconsiderar la inclusión de la variable. Sin embargo, dado que `Price` es la variable objetivo principal del análisis de regresión —y su ausencia es en su mayoría atribuible a errores del *scraper*, no a un patrón sistemático—, se conserva íntegramente y no se imputa. Las observaciones con `Price` ausente participarán en la tarea de clasificación pero quedarán excluidas del modelado de regresión.
+
+```{r guardar, include=FALSE}
+write_xlsx(datos, "02_morocco_cars_limpios.xlsx")
+```
+
+### Tratamiento de valores faltantes mediante KNN
+
+Se utilizó imputación por vecinos más cercanos con la función `kNN` del paquete `VIM` [@VIM], `k = 5`. Las variables `Price` y `First.Owner` no se imputan al ser variables objetivo. La imputación se realiza de forma independiente para cada variable, usando siempre el dataset limpio original como base.
+
+```{r imputacion}
+library(VIM)
+
+objetivos     <- c("Price", "First.Owner")
+vars_imputar  <- setdiff(names(datos)[colSums(is.na(datos)) > 0], objetivos)
+datos_limpios <- datos   # Copia post-conversión para comparación EDA
+
+datos_imputados <- datos
+
+for (var in vars_imputar) {
+  datos_aux <- kNN(
+    datos,
+    variable = var,
+    dist_var = setdiff(names(datos), c(objetivos, var)),
+    k = 5,
+    imp_var = FALSE
+  )
+  datos_imputados[[var]] <- datos_aux[[var]]
+}
+```
+
+```{r guardar-imputados, include=FALSE}
+write_xlsx(datos_imputados, "datos_imputados_knn.xlsx")
+```
+
+El análisis exploratorio de las distribuciones antes y después de la imputación se recoge en el Anexo II, donde se puede comprobar que KNN no distorsiona las distribuciones originales.
+
+## Análisis no supervisado
+
+### Análisis de Componentes Principales
+
+Para explorar la estructura de correlaciones entre las variables numéricas se aplica un PCA con `FactoMineR` [@FactoMineR]. El análisis se restringe al subconjunto de observaciones con `Price` conocido (sin NAs), de modo que las seis variables numéricas entran completas. La variable `Condition` se incorpora como **variable suplementaria cualitativa** para interpretar en qué zona del espacio factorial se ubican los distintos estados del vehículo sin que influya en el cálculo de las componentes.
+
+```{r pca-calc, message=FALSE}
+library(FactoMineR)
+library(factoextra)
+
+idx_price_ok <- !is.na(datos_imputados$Price)
+datos_pca_full <- datos_imputados[idx_price_ok,
+                    c("Age", "Mileage_mid", "Price", "Fiscal_Power_num",
+                      "n_extras_seguridad", "n_extras_tecnologia", "Condition")]
+datos_pca_full$Condition <- as.factor(datos_pca_full$Condition)
+
+# Centrado y escalado de las variables numéricas antes del PCA
+vars_num_pca <- c("Age", "Mileage_mid", "Price", "Fiscal_Power_num",
+                  "n_extras_seguridad", "n_extras_tecnologia")
+datos_pca_scaled <- datos_pca_full
+datos_pca_scaled[, vars_num_pca] <- scale(datos_pca_full[, vars_num_pca])
+
+res.pca <- PCA(datos_pca_scaled,
+               quali.sup = which(names(datos_pca_scaled) == "Condition"),
+               scale.unit = FALSE,
+               graph = FALSE)
+
+var_exp <- res.pca$eig[, 2]
+```
+
+```{r pca-scree, fig.width=6, fig.height=4, out.width="50%", fig.align='center'}
+p_scree <- fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 55),
+         barfill = "steelblue", barcolor = "white", linecolor = "red") +
+  labs(title = "Scree plot — PCA", x = NULL, y = "% Varianza explicada") +
+  theme_minimal(base_size = 12)
+print(p_scree)
+ggsave("graficas/pca_scree.png", p_scree, width = 6, height = 4)
+```
+
+Las dos primeras componentes explican conjuntamente el `r round(res.pca$eig[2, 3], 1)` % de la varianza total, próximo al 61 %, lo que confirma que el espacio bidimensional captura la estructura esencial del dataset.
+
+```{r pca-circulo, fig.width=6, fig.height=6, out.width="50%", fig.align='center'}
+p_circ <- fviz_pca_var(res.pca,
+                        col.var     = "steelblue",
+                        col.circle  = "gray40",
+                        title       = "Circulo de correlaciones — PCA",
+                        repel       = TRUE)
+
+# Condition barycenters escalados al plano del circulo
+eig_sd     <- sqrt(res.pca$eig[1:2, 1])
+cond_raw   <- res.pca$quali.sup$coord[, 1:2]
+cond_sc    <- sweep(cond_raw, 2, eig_sd, "/")
+cond_df    <- data.frame(label = rownames(cond_sc),
+                          x = cond_sc[, 1], y = cond_sc[, 2])
+
+p_circ <- p_circ +
+  geom_point(data = cond_df, aes(x = x, y = y),
+             color = "darkred", size = 3.5, shape = 17, inherit.aes = FALSE) +
+  geom_text(data = cond_df, aes(x = x, y = y, label = label),
+            color = "darkred", size = 3, hjust = -0.15, inherit.aes = FALSE)
+
+print(p_circ)
+ggsave("graficas/pca_circulo.png", p_circ, width = 6, height = 6)
+```
+
+En el mapa factorial se pueden apreciar las siguiente relaciones:
+
+- **`n_extras_seguridad` y `n_extras_tecnologia` están extremadamente correlacionados positivamente** (sus vectores son casi paralelos y apuntan en la misma dirección). Esto tiene pleno sentido: los vehículos modernos incorporan simultáneamente más elementos de seguridad (airbags, ABS, ESP) y más dotación tecnológica (GPS, cámara trasera, Bluetooth), por lo que ambos contadores evolucionan conjuntamente. Para los análisis supervisados posteriores se unificarán en una única variable `n_extras_total`, reduciendo la redundancia.
+
+- **`Age` y `Mileage_mid` se sitúan en el extremo opuesto a `Price`**: A mayor antigüedad y kilometraje, menor precio. PC1 puede interpretarse como un **eje de depreciación**.
+
+- **`Fiscal_Power_num`** contribuye moderadamente a ambas componentes, con un vector casi perpendicular al grupo `Age`/`Mileage_mid`/`Price`. Al igual que los extras de equipamiento, se posiciona en una zona intermedia del plano factorial, indicando que la potencia fiscal tiene una asociación con el precio independiente del desgaste del vehículo.
+
+La variable suplementaria `Condition` permite observar que las categorías de mejor estado (*Excellent*, *New*) se proyectan hacia la zona de `Price` elevado, mientras que *Fair* y *Good* se asocian a mayores valores de `Age` y `Mileage_mid`.
+
+## Modelado de clasificación: predicción de First.Owner
+
+La clasificación del primer propietario (`First.Owner`) permite identificar qué características del vehículo distinguen los coches que han tenido un único dueño. Se comparan cinco modelos: regresión logística con selección *backward* por AIC, árbol CART, *Random Forest*, SVM lineal y Naive Bayes. La evaluación se realiza mediante *hold-out* 75/25 estratificado y validación cruzada interna de 5 *folds*.
+
+```{r cls-setup, message=FALSE, warning=FALSE}
+library(readxl); library(caret); library(pROC)
+library(rpart); library(rpart.plot); library(randomForest)
+library(kernlab); library(klaR)
+
+set.seed(123)
+
+df_cls <- as.data.frame(read_excel("datos_imputados_knn.xlsx"))
+df_cls$Price <- NULL
+
+# n_extras_total: suma de ambos contadores; usado en todos los modelos supervisados
+df_cls$n_extras_total <- df_cls$n_extras_seguridad + df_cls$n_extras_tecnologia
+
+df_cls$First.Owner     <- as.factor(df_cls$First.Owner)
+df_cls$Gearbox         <- as.factor(df_cls$Gearbox)
+df_cls$Fuel            <- as.factor(df_cls$Fuel)
+df_cls$Condition       <- as.factor(df_cls$Condition)
+df_cls$Number.of.Doors <- as.factor(df_cls$Number.of.Doors)
+
+df_train_cls <- df_cls[!is.na(df_cls$First.Owner), ]
+```
+
+```{r cls-particion}
+set.seed(123)
+trainIdx  <- createDataPartition(df_train_cls$First.Owner, p = 0.75, list = FALSE)
+train_cls <- df_train_cls[ trainIdx, ]
+test_cls  <- df_train_cls[-trainIdx, ]
+```
+
+Las variables `BrandModel`, `Location`, `Sector` y `Origin` se excluyen de todos los modelos supervisados por alta cardinalidad (superan el límite operativo de *Random Forest* de 53 niveles) y ausencia de efecto generalizable. `Price` se excluye al ser objetivo del análisis de regresión.
+
+```{r cls-formula}
+formula_cls <- First.Owner ~ Age + Mileage_mid + Fiscal_Power_num +
+               Number.of.Doors + n_extras_total +
+               Gearbox + Fuel + Condition
+```
+
+```{r cls-control}
+ctrl_cls <- trainControl(
+  method          = "cv",
+  number          = 5,
+  classProbs      = TRUE,
+  summaryFunction = twoClassSummary
+)
+```
+
+```{r cls-metricas-fn, echo=FALSE}
+extraer_metricas_cls <- function(mc) {
+  t  <- mc$table
+  TP <- t["Yes", "Yes"]; TN <- t["No", "No"]
+  FP <- t["Yes", "No"];  FN <- t["No", "Yes"]
+  acc  <- round((TP + TN) / sum(t), 4)
+  prec <- round(TP / (TP + FP), 4)
+  rec  <- round(TP / (TP + FN), 4)
+  f1   <- round(2 * prec * rec / (prec + rec), 4)
+  c(Accuracy = acc, Precision = prec, Recall = rec, F1 = f1)
+}
+```
+
+```{r cls-todos-modelos}
+# Logística
+mod.logit <- step(glm(formula_cls, data = train_cls, family = binomial),
+                  direction = "backward", trace = 0)
+prob_logit <- predict(mod.logit, newdata = test_cls, type = "response")
+pred_logit <- factor(ifelse(prob_logit > 0.5, "Yes", "No"),
+                     levels = levels(test_cls$First.Owner))
+mc_logit  <- confusionMatrix(pred_logit, test_cls$First.Owner, positive = "Yes", mode = "everything")
+roc_logit <- roc(test_cls$First.Owner, prob_logit)
+auc_logit <- auc(roc_logit)
+met_logit <- extraer_metricas_cls(mc_logit)
+or_df     <- data.frame("Odds Ratio" = round(exp(coef(mod.logit)), 4), check.names = FALSE)
+
+# CART
+set.seed(123)
+modelo_arbol <- train(formula_cls, data = train_cls,
+                      method = "rpart", trControl = ctrl_cls, metric = "ROC")
+pred_arbol <- predict(modelo_arbol, test_cls)
+prob_arbol <- predict(modelo_arbol, test_cls, type = "prob")
+mc_arbol   <- confusionMatrix(pred_arbol, test_cls$First.Owner, positive = "Yes", mode = "everything")
+roc_arbol  <- roc(test_cls$First.Owner, prob_arbol[, "Yes"])
+auc_arbol  <- auc(roc_arbol)
+met_arbol  <- extraer_metricas_cls(mc_arbol)
+
+# Random Forest
+set.seed(123)
+modelo_rf <- train(formula_cls, data = train_cls,
+                   method = "rf", ntree = 250, trControl = ctrl_cls, metric = "ROC")
+pred_rf <- predict(modelo_rf, test_cls)
+prob_rf <- predict(modelo_rf, test_cls, type = "prob")
+mc_rf   <- confusionMatrix(pred_rf, test_cls$First.Owner, positive = "Yes", mode = "everything")
+roc_rf  <- roc(test_cls$First.Owner, prob_rf[, "Yes"])
+auc_rf  <- auc(roc_rf)
+met_rf  <- extraer_metricas_cls(mc_rf)
+
+# SVM lineal
+ctrl_svm <- trainControl(method = "cv", number = 3, classProbs = TRUE,
+                         summaryFunction = twoClassSummary, verboseIter = FALSE)
+set.seed(123)
+modelo_svm <- train(formula_cls, data = train_cls,
+                    method = "svmLinear", trControl = ctrl_svm,
+                    preProcess = c("center", "scale"), tuneLength = 1, metric = "ROC")
+pred_svm <- predict(modelo_svm, test_cls)
+prob_svm <- predict(modelo_svm, test_cls, type = "prob")
+mc_svm   <- confusionMatrix(pred_svm, test_cls$First.Owner, positive = "Yes", mode = "everything")
+roc_svm  <- roc(test_cls$First.Owner, prob_svm[, "Yes"])
+auc_svm  <- auc(roc_svm)
+met_svm  <- extraer_metricas_cls(mc_svm)
+
+# Naive Bayes
+vars_nb  <- c("First.Owner", "Age", "Mileage_mid", "Fiscal_Power_num",
+              "Number.of.Doors", "n_extras_total", "Gearbox", "Fuel", "Condition")
+train_nb <- na.omit(train_cls[, vars_nb])
+test_nb  <- na.omit(test_cls[,  vars_nb])
+set.seed(123)
+modelo_nb <- train(x = train_nb[, -1], y = train_nb$First.Owner,
+                   method = "nb", trControl = ctrl_cls)
+pred_nb <- predict(modelo_nb, test_nb[, -1])
+prob_nb <- predict(modelo_nb, test_nb[, -1], type = "prob")
+mc_nb   <- confusionMatrix(pred_nb, test_nb$First.Owner, positive = "Yes", mode = "everything")
+roc_nb  <- roc(test_nb$First.Owner, prob_nb[, "Yes"])
+auc_nb  <- auc(roc_nb)
+met_nb  <- extraer_metricas_cls(mc_nb)
+```
+
+### Comparación de modelos de clasificación
+
+```{r cls-comparacion, echo=FALSE}
+comparativa_cls <- data.frame(
+  Modelo    = c("Reg. logistica", "Arbol CART", "Random Forest", "SVM lineal", "Naive Bayes"),
+  Accuracy  = c(met_logit["Accuracy"],  met_arbol["Accuracy"],  met_rf["Accuracy"],
+                met_svm["Accuracy"],    met_nb["Accuracy"]),
+  Precision = c(met_logit["Precision"], met_arbol["Precision"], met_rf["Precision"],
+                met_svm["Precision"],   met_nb["Precision"]),
+  Recall    = c(met_logit["Recall"],    met_arbol["Recall"],    met_rf["Recall"],
+                met_svm["Recall"],      met_nb["Recall"]),
+  F1        = c(met_logit["F1"],        met_arbol["F1"],        met_rf["F1"],
+                met_svm["F1"],          met_nb["F1"]),
+  AUC       = round(c(as.numeric(auc_logit), as.numeric(auc_arbol), as.numeric(auc_rf),
+                      as.numeric(auc_svm),   as.numeric(auc_nb)), 4)
+)
+knitr::kable(comparativa_cls,
+             caption = "Tabla 4. Comparacion de modelos de clasificacion — First.Owner (test).")
+```
+
+```{r cls-logit-heatmap, fig.width=5, fig.height=4}
+cm_df <- as.data.frame(mc_logit$table)
+names(cm_df) <- c("Predicho", "Real", "Frecuencia")
+p_heatmap <- ggplot(cm_df, aes(x = Real, y = Predicho, fill = Frecuencia)) +
+  geom_tile(color = "white", linewidth = 1.2) +
+  geom_text(aes(label = Frecuencia), size = 8, fontface = "bold", color = "white") +
+  scale_fill_gradient(low = "#4472C4", high = "#1F3864") +
+  labs(title = "Matriz de confusion — Regresion logistica",
+       x = "Valor real", y = "Valor predicho") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+print(p_heatmap)
+ggsave("graficas/cls_logit_heatmap.png", p_heatmap, width = 5, height = 4)
+```
+
+### Evaluación mediante curvas ROC
+
+```{r cls-roc, fig.width=8, fig.height=5}
+roc_list <- list(
+  "Logistica" = roc_logit, "CART" = roc_arbol, "RF" = roc_rf,
+  "SVM"       = roc_svm,   "NB"   = roc_nb
+)
+cols_roc   <- c("Logistica" = "blue", "CART" = "red", "RF" = "darkgreen",
+                "SVM" = "purple", "NB" = "orange")
+auc_vals   <- c(as.numeric(auc_logit), as.numeric(auc_arbol), as.numeric(auc_rf),
+                as.numeric(auc_svm),   as.numeric(auc_nb))
+auc_labels <- paste0(names(roc_list), " (AUC=", round(auc_vals, 3), ")")
+
+p_roc <- ggroc(roc_list, linewidth = 0.9) +
+  geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1),
+               linetype = "dashed", color = "gray50", linewidth = 0.6,
+               inherit.aes = FALSE) +
+  scale_color_manual(values = cols_roc, labels = auc_labels, name = "Modelo") +
+  labs(title = "Curvas ROC — First.Owner",
+       x = "Especificidad", y = "Sensibilidad") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position  = "right",
+        legend.text      = element_text(size = 9),
+        legend.key.width = unit(1.5, "cm")) +
+  guides(color = guide_legend(ncol = 1, override.aes = list(linewidth = 2)))
+print(p_roc)
+ggsave("graficas/cls_roc_curves.png", p_roc, width = 8, height = 5)
+```
+
+### Síntesis del modelo de clasificación
+
+Los cinco modelos presentan métricas de *accuracy* similares entre sí, lo que refleja la dificultad inherente del problema: las características disponibles en el anuncio tienen un poder discriminante limitado pero aún así muy interesante sobre el historial de propiedad. El *Random Forest* obtiene ligeramente mejores AUC y F1, pero la diferencia respecto a la regresión logística es marginal. **Se opta por la regresión logística como modelo definitivo** por su mayor interpretabilidad: los coeficientes permiten cuantificar directamente el efecto de cada variable sobre la probabilidad de ser primer propietario, lo cual tiene valor explicativo tanto en el contexto del trabajo como en una aplicación real. Los odds ratios muestran que los vehículos más recientes, con menos kilometraje y en mejor estado de conservación tienen mayor probabilidad de ser primer propietario, lo que es coherente con el comportamiento del mercado.
+
+```{r cls-or-tabla, echo=FALSE}
+knitr::kable(or_df, caption = "Tabla 4b. Odds ratios — Regresion logistica (First.Owner).")
+```
+
+## Modelado de regresión: predicción del precio
+
+El objetivo es predecir el precio de venta (`Price`) a partir de las características del vehículo. El análisis se restringe exclusivamente a las observaciones con `Price` conocido; las filas con `Price` ausente se han eliminado antes del modelado.
+
+Las variables `BrandModel`, `Location`, `Sector` y `Origin` se excluyen de todos los modelos supervisados: las tres primeras presentan una cardinalidad que supera el límite operativo de *Random Forest* (máximo 53 niveles), y `Origin` se excluye por decisión del grupo al considerar que su efecto queda recogido por otras variables. `First.Owner` se excluye al ser el objetivo de la tarea de clasificación. Se comparan tres modelos: regresión lineal múltiple (*baseline* interpretable), árbol CART podado con la regla 1-SE [@Breiman1984], y *Random Forest* [@randomForest].
+
+```{r reg-setup, message=FALSE, warning=FALSE}
+library(caret); library(rpart); library(rpart.plot)
+library(DMwR2); library(randomForest); library(iml)
+library(auditor); library(readxl)
+```
+
+```{r reg-datos}
+datos_reg <- as.data.frame(read_excel("datos_imputados_knn.xlsx"))
+vars_cat_reg <- c("BrandModel", "Condition", "Gearbox", "Fuel",
+                  "First.Owner", "Location", "Sector")
+datos_reg[vars_cat_reg]    <- lapply(datos_reg[vars_cat_reg], as.factor)
+datos_reg$Number.of.Doors  <- as.factor(datos_reg$Number.of.Doors)
+datos_reg$Price            <- as.numeric(datos_reg$Price)
+datos_reg$Age              <- as.numeric(datos_reg$Age)
+datos_reg$Mileage_mid      <- as.numeric(datos_reg$Mileage_mid)
+datos_reg$Fiscal_Power_num <- as.numeric(datos_reg$Fiscal_Power_num)
+
+datos_reg <- datos_reg[!is.na(datos_reg$Price), ]
+datos_reg$n_extras_total <- datos_reg$n_extras_seguridad + datos_reg$n_extras_tecnologia
+```
+```{r reg-particion}
+set.seed(1)
+trainIndex <- createDataPartition(datos_reg$Price, p = 0.75, list = FALSE)
+train_reg  <- datos_reg[ trainIndex, ]
+test_reg   <- datos_reg[-trainIndex, ]
+```
+```{r reg-metricas}
+funcRMSE <- function(Ypred, Yobs, ndec = 4) round(sqrt(mean((Ypred - Yobs)^2)), ndec)
+funcMAE  <- function(Ypred, Yobs, ndec = 4) round(mean(abs(Ypred - Yobs)), ndec)
+funcNMSE <- function(Ypred, Yobs, ndec = 4)
+  round(sum((Ypred - Yobs)^2) / sum((mean(Yobs) - Yobs)^2), ndec)
+funcNMAE <- function(Ypred, Yobs, ndec = 4)
+  round(sum(abs(Ypred - Yobs)) / sum(abs(mean(Yobs) - Yobs)), ndec)
+
+medidasER <- function(Ypred, Yobs, ndec = 4)
+  c(RMSE = funcRMSE(Ypred, Yobs, ndec), MAE  = funcMAE(Ypred, Yobs, ndec),
+    NMSE = funcNMSE(Ypred, Yobs, ndec), NMAE = funcNMAE(Ypred, Yobs, ndec))
+```
+
+### Regresión lineal múltiple
+
+La regresión lineal actúa como *baseline* interpretable. Los precios de vehículos usados siguen distribuciones marcadamente asimétricas y de tipo log-normal, por lo que se modela **log(Price)** como variable respuesta en lugar de Price directamente: esta transformación estabiliza la varianza de los residuos, corrige la asimetría de los errores y eleva sustancialmente el poder explicativo y predictivo de los modelos. Las predicciones finales se obtienen aplicando exp() sobre la salida del modelo, recuperando así la escala original en dírhams (MAD). Se ajusta el modelo completo sobre log(Price) y se aplica selección *backward* por AIC mediante `step()`, eliminando iterativamente los términos que no mejoran el criterio de información.
+
+```{r reg-lm}
+vars_excluir_lm <- c("BrandModel", "Location", "Sector", "First.Owner", "Origin",
+                     "n_extras_seguridad", "n_extras_tecnologia")
+
+train.lm <- train_reg[, !names(train_reg) %in% vars_excluir_lm]
+test.lm  <- test_reg[,  !names(test_reg)  %in% vars_excluir_lm]
+
+for (v in names(train.lm)[sapply(train.lm, is.factor)]) {
+  test.lm[[v]] <- factor(test.lm[[v]], levels = levels(train.lm[[v]]))
+}
+
+train.lm.log       <- train.lm
+train.lm.log$Price <- log(train.lm$Price)
+
+mod.lm <- step(lm(Price ~ ., data = train.lm.log), direction = "backward", trace = 0)
+```
+
+El diagnóstico de residuos (QQ-plot) se recoge en el Anexo IV.
+
+```{r reg-lm-pred}
+pred.lm <- exp(predict(mod.lm, newdata = test.lm))
+pred.lm <- pmax(pred.lm, 0)
+```
+
+### Árbol de regresión CART
+
+Se construye el árbol completo y se poda con la regla 1-SE de @Breiman1984. El árbol podado se presenta en el Anexo IV.
+
+```{r reg-cart}
+vars_excluir_cart <- c("BrandModel", "Location", "Sector", "First.Owner", "Origin",
+                       "n_extras_seguridad", "n_extras_tecnologia")
+
+train.cart <- train_reg[, !names(train_reg) %in% vars_excluir_cart]
+test.cart  <- test_reg[,  !names(test_reg)  %in% vars_excluir_cart]
+
+for (v in names(train.cart)[sapply(train.cart, is.factor)]) {
+  test.cart[[v]] <- factor(test.cart[[v]], levels = levels(train.cart[[v]]))
+}
+
+set.seed(1234)
+mod.rt.full <- rpart(Price ~ ., data = train.cart)
+```
+
+```{r reg-cart-poda}
+mod.rt <- rpartXse(Price ~ ., data = train.cart, se = 1)
+```
+
+```{r reg-cart-pred}
+pred.rt <- predict(mod.rt, newdata = test.cart)
+```
+
+### Random Forest
+
+El *Random Forest* construye 250 árboles con muestras aleatorias de entrenamiento. En cada división se selecciona aleatoriamente un subconjunto de `mtry = floor(p/3)` variables, configuración estándar para regresión. La agregación de múltiples árboles reduce la varianza de estimación sin necesidad de poda.
+
+```{r reg-rf}
+vars_excluir_rf <- c("BrandModel", "Location", "Sector", "First.Owner", "Origin",
+                     "n_extras_seguridad", "n_extras_tecnologia")
+
+train.rf <- train_reg[, !names(train_reg) %in% vars_excluir_rf]
+test.rf  <- test_reg[,  !names(test_reg)  %in% vars_excluir_rf]
+
+for (v in names(train.rf)[sapply(train.rf, is.factor)]) {
+  test.rf[[v]] <- factor(test.rf[[v]], levels = levels(train.rf[[v]]))
+}
+
+n.pred   <- ncol(train.rf) - 1
+mtry_val <- max(1, floor(n.pred / 3))
+
+set.seed(123)
+mod.rf <- randomForest(Price ~ ., data = train.rf,
+                       ntree = 250, mtry = mtry_val, importance = TRUE)
+```
+
+```{r reg-rf-pred}
+pred.rf <- predict(mod.rf, newdata = test.rf)
+```
+
+**Comparación de modelos**
+
+```{r reg-comparacion-tabla, echo=FALSE}
+tablaMetricas <- rbind(
+  LM   = medidasER(pred.lm, test_reg$Price),
+  CART = medidasER(pred.rt, test_reg$Price),
+  RF   = medidasER(pred.rf, test_reg$Price)
+)
+knitr::kable(tablaMetricas,
+             caption = "Tabla 5. Comparacion de metricas — LM ajustado sobre log(Price) con predicciones en MAD, CART y RF en escala original (test).")
+```
+
+La mejora es monotónica de LM a CART a RF en todas las métricas. La transición de la regresión lineal al árbol CART representa una reducción del RMSE del `r round((1 - medidasER(pred.rt, test_reg$Price)["RMSE"] / medidasER(pred.lm, test_reg$Price)["RMSE"]) * 100, 1)` % y del MAE del `r round((1 - medidasER(pred.rt, test_reg$Price)["MAE"] / medidasER(pred.lm, test_reg$Price)["MAE"]) * 100, 1)` %, atribuible a la captura de interacciones. El salto del árbol al *Random Forest* es más pronunciado —RMSE cae un `r round((1 - medidasER(pred.rf, test_reg$Price)["RMSE"] / medidasER(pred.rt, test_reg$Price)["RMSE"]) * 100, 1)` % adicional— gracias a la reducción de varianza por agregación de 250 árboles.
+
+```{r reg-comparacion-grafico, fig.width=6, fig.height=6}
+lim <- range(c(test_reg$Price, pred.lm, pred.rt, pred.rf), na.rm = TRUE)
+pred_df <- data.frame(
+  Observado = rep(test_reg$Price, 3),
+  Predicho  = c(pred.lm, pred.rt, pred.rf),
+  Modelo    = factor(rep(c("LM", "CART", "RF"), each = length(test_reg$Price)),
+                     levels = c("LM", "CART", "RF"))
+)
+p_predobs <- ggplot(pred_df, aes(x = Observado, y = Predicho, color = Modelo)) +
+  geom_point(alpha = 0.25, size = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black", linewidth = 0.8) +
+  scale_color_manual(values = c("LM" = "#1F77B4", "CART" = "#D62728", "RF" = "#2CA02C")) +
+  coord_fixed(xlim = lim, ylim = lim) +
+  labs(title = "Predichos vs. observados — conjunto de test",
+       x = "Precio observado (MAD)", y = expression(hat(y)), color = "Modelo") +
+  theme_minimal(base_size = 12) +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
+print(p_predobs)
+ggsave("graficas/reg_pred_obs.png", p_predobs, width = 6, height = 6)
+```
+
+```{r reg-rec, fig.width=7, fig.height=4, include = FALSE}
+lm_audit <- audit(
+  mod.lm,
+  data = test.lm,
+  y = test_reg$Price,
+  predict.function = function(m, d) exp(predict(m, newdata = d)),
+  label = "LM"
+)
+
+cart_audit <- audit(mod.rt, data = test.cart, y = test_reg$Price, label = "CART")
+rf_audit   <- audit(mod.rf, data = test.rf,   y = test_reg$Price, label = "RF")
+
+mr_lm   <- model_residual(lm_audit)
+mr_cart <- model_residual(cart_audit)
+mr_rf   <- model_residual(rf_audit)
+```
+
+```{r reg-rec-grafico, fig.width=7, fig.height=4}
+p_rec <- plot_rec(mr_lm, mr_cart, mr_rf)
+print(p_rec)
+ggsave("graficas/reg_rec_curve.png", p_rec, width = 7, height = 4)
+```
+
+La curva REC muestra el porcentaje acumulado de predicciones dentro de distintos márgenes de error absoluto. El *Random Forest* mantiene su curva por encima de las de LM y CART en prácticamente todos los niveles de tolerancia. El árbol CART supera al modelo lineal a partir de márgenes intermedios, donde la captura de interacciones empieza a ser relevante.
+
+### Interpretabilidad del Random Forest
+
+Los dos gráficos de importancia miden aspectos complementarios. El **%IncMSE** (izquierda) cuantifica cuánto aumenta el error cuando se perturba una variable; el **IncNodePurity** (derecha) mide la reducción total de varianza acumulada en todos los árboles. Ambas métricas coinciden: **`Age`** es el predictor dominante, seguido de `Gearbox`, `Mileage_mid`, `Fiscal_Power_num` y `Condition`. Este ranking es coherente con el PCA y los coeficientes del LM. Los análisis ALE y LIME, que explican el efecto no lineal de `Age` y `Mileage_mid` y la explicación de predicciones individuales, se presentan en el Anexo IV.
+
+```{r reg-rf-importancia, fig.width=8, fig.height=5}
+varImpPlot(mod.rf, main = "Importancia de variables — RF (Price)", col = "darkblue")
+```
+
+### Síntesis del modelo de regresión
+
+El *Random Forest* es el modelo de mejor desempeño en todas las métricas de error, con una reducción sustancial del NMSE respecto al *baseline* lineal. Los principales determinantes del precio son consistentes entre los tres modelos: **antigüedad** (`Age`), **tipo de transmisión** (`Gearbox`), **kilometraje** (`Mileage_mid`), **potencia fiscal** y **estado del vehículo** (`Condition`). La no linealidad detectada por los gráficos ALE —especialmente la fuerte prima de los vehículos recientes— explica por qué los modelos basados en árboles superan a la regresión lineal. Esta última, pese a su menor precisión predictiva, retiene valor como herramienta interpretativa para cuantificar efectos marginales directamente legibles, y ofrece al comprador una estimación de precio ajustada, transparente y explicable.
+
+# Conclusiones
+
+Este trabajo ha aplicado un *pipeline* completo de minería de datos al dataset MUCars-2024, abordando los dos objetivos planteados en la introducción.
+
+**Análisis no supervisado:** El PCA sobre las variables numéricas revela dos ejes principales de variabilidad —el eje de depreciación (Age, Mileage_mid vs. Price) y el eje de equipamiento (n_extras)— que explican conjuntamente en torno al 60 % de la varianza. Esta estructura subyacente es consistente con los resultados de los modelos supervisados.
+
+**Predicción del precio (`Price`):** El modelo *Random Forest* se confirma como la mejor alternativa predictiva, mejorando claramente al árbol CART y al modelo lineal en todas las métricas de error evaluadas sobre el conjunto de test. La antigüedad del vehículo es el factor más determinante del precio, seguido del tipo de cambio, el kilometraje y la potencia fiscal. Los gráficos ALE revelan una depreciación no lineal concentrada en los primeros años, lo que explica la ventaja de los modelos basados en árboles. Desde el punto de vista práctico, el modelo desarrollado permite a cualquier comprador obtener una estimación objetiva del valor de mercado de un vehículo y compararlo con el precio publicado en el anuncio, reduciendo la incertidumbre en la toma de decisiones de compra.
+
+**Clasificación del primer propietario (`First.Owner`):** Los cinco modelos evaluados presentan métricas similares entre sí, lo que refleja el limitado poder discriminante de las variables disponibles en el anuncio sobre el historial de propiedad. Se selecciona la regresión logística como modelo definitivo por su interpretabilidad: los odds ratios confirman que los vehículos más recientes, con menos kilometraje y en mejor estado tienen mayor probabilidad de ser primer propietario, lo cual es coherente con la lógica del mercado.
+
+En conjunto, el trabajo ha permitido aplicar y comparar técnicas vistas en la asignatura —imputación KNN, PCA, regresión lineal con selección de variables, árboles de decisión, *Random Forest*, SVM, Naive Bayes, ALE y LIME— sobre un dataset real y de tamaño relevante, demostrando que la minería de datos aporta valor concreto para entender la dinámica de precios en un mercado complejo como el de los coches de segunda mano en Marruecos.
+
+## Anexo I. Recursos utilizados
+
+```{r anexo-herramientas, echo=FALSE}
+herramientas <- data.frame(
+  Herramienta = c("R", "RStudio", "Microsoft Excel", "Claude Code", "OpenAI Codex"),
+  Uso = c("Lenguaje de programación y análisis estadístico",
+          "Entorno de desarrollo para la elaboración y ejecución del Rmd",
+          "Formato de los ficheros de datos de entrada y salida",
+          "Asistencia en el desarrollo y revisión del código",
+          "Asistencia en la revisión del documento, referencias y código")
+)
+knitr::kable(herramientas, caption = "Anexo I. Herramientas generales utilizadas.")
+```
+
+```{r anexo-paquetes, echo=FALSE}
+paquetes <- data.frame(
+  Paquete = c("readxl", "writexl", "VIM", "FactoMineR", "factoextra",
+              "caret", "rpart", "rpart.plot", "DMwR2", "randomForest",
+              "iml", "auditor", "pROC", "kernlab", "klaR", "ggplot2"),
+  Uso = c("Lectura de ficheros Excel",
+          "Escritura de ficheros Excel",
+          "Imputacion KNN",
+          "PCA",
+          "Visualizacion PCA",
+          "Particion, CV y entrenamiento de modelos",
+          "Arboles CART",
+          "Visualizacion de arboles",
+          "Regla 1-SE (rpartXse)",
+          "Random Forest",
+          "ALE y LIME (interpretabilidad)",
+          "Curva REC",
+          "Curvas ROC y AUC",
+          "SVM lineal",
+          "Naive Bayes",
+          "Graficos")
+)
+knitr::kable(paquetes, caption = "Anexo I. Paquetes de R utilizados en el analisis.")
+```
+
+```{r anexo-ficheros, echo=FALSE}
+ficheros <- data.frame(
+  Fichero = c("01_morocco_cars_original.xlsx",
+              "02_morocco_cars_limpios.xlsx",
+              "datos_imputados_knn.xlsx",
+              "trabajo_final_v2.Rmd",
+              "refs.bib",
+              "graficas/"),
+  Descripcion = c("Dataset original descargado de Mendeley Data (Tabarnoust et al., 2025)",
+                  "Dataset tras limpieza y preprocesamiento (generado por el Rmd)",
+                  "Dataset imputado con KNN (generado por el Rmd; input para modelos supervisados y PCA)",
+                  "Documento principal de analisis (este fichero)",
+                  "Fichero de bibliografia BibTeX",
+                  "Carpeta con todas las graficas generadas durante el analisis")
+)
+knitr::kable(ficheros, caption = "Anexo I (cont.). Relacion de ficheros del proyecto.")
+```
+
+## Anexo II. Descripción del dataset y distribuciones
+
+```{r anexo-tabla-variables, echo=FALSE}
+vars <- data.frame(
+  Variable = c("Brand", "Model", "Year → Age", "Condition", "Mileage → Mileage_mid",
+               "Gearbox", "Fuel", "Fiscal.Power → Fiscal_Power_num",
+               "Number.of.Doors", "Origin", "First.Owner",
+               "Location", "Sector", "Equipment → n_extras_*", "Price"),
+  Tipo = c("Nominal", "Nominal", "Discreta", "Ordinal", "Numerica continua",
+           "Nominal", "Nominal", "Discreta", "Discreta", "Nominal", "Binaria",
+           "Nominal", "Nominal", "Discreta (contadores)", "Continua"),
+  Rol = c("Excluida (fusionada en BrandModel)", "Excluida (fusionada en BrandModel)",
+          "Predictor", "Predictor / suplementaria PCA", "Predictor",
+          "Predictor", "Predictor", "Predictor",
+          "Predictor (factor)", "Excluida de modelos supervisados",
+          "Objetivo clasificacion", "Excluida (alta cardinalidad)",
+          "Excluida (alta cardinalidad)", "Predictor (n_extras_total)",
+          "Objetivo regresion")
+)
+knitr::kable(vars, caption = "Tabla A1. Variables del dataset MUCars-2024, tipo y rol en el analisis.")
+```
+
+**Variables numéricas imputadas (comparación antes/después)**
+
+```{r eda-numericas-imputadas, fig.width=7, fig.height=3.5}
+vars_imputar_num <- intersect(vars_imputar,
+                              names(datos_limpios)[sapply(datos_limpios, is.numeric)])
+
+for (v in vars_imputar_num) {
+  d_antes <- data.frame(val = datos_limpios[[v]], etapa = "Antes")
+  d_desp  <- data.frame(val = datos_imputados[[v]], etapa = "Despues")
+  d_comb  <- rbind(na.omit(d_antes), d_desp)
+  d_comb$etapa <- factor(d_comb$etapa, levels = c("Antes", "Despues"))
+
+  p <- ggplot(d_comb, aes(x = val)) +
+    geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+    facet_wrap(~etapa, ncol = 2) +
+    labs(title = paste("Distribucion de", v), x = v, y = "Frecuencia") +
+    theme_minimal(base_size = 11)
+  print(p)
+  ggsave(paste0("graficas/eda_num_", v, ".png"), p, width = 7, height = 3.5)
+}
+```
+
+**Variables categóricas imputadas (comparación antes/después)**
+
+```{r eda-categoricas-imputadas, fig.width=8, fig.height=4}
+vars_imputar_cat <- intersect(vars_imputar,
+                              names(datos_limpios)[sapply(datos_limpios, is.factor)])
+
+for (v in vars_imputar_cat) {
+  top10 <- names(sort(table(datos_imputados[[v]]), decreasing = TRUE))[1:min(10, nlevels(datos_imputados[[v]]))]
+
+  d_antes <- na.omit(data.frame(val = as.character(datos_limpios[[v]]), etapa = "Antes"))
+  d_desp  <- data.frame(val = as.character(datos_imputados[[v]]), etapa = "Despues")
+  d_comb  <- rbind(d_antes, d_desp)
+  d_comb  <- d_comb[d_comb$val %in% top10, ]
+  d_comb$etapa <- factor(d_comb$etapa, levels = c("Antes", "Despues"))
+
+  p <- ggplot(d_comb, aes(x = val)) +
+    geom_bar(fill = "steelblue", color = "white") +
+    facet_wrap(~etapa, ncol = 2, scales = "free_y") +
+    labs(title = paste("Distribucion de", v, "(Top 10)"), x = "", y = "Frecuencia") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  print(p)
+  ggsave(paste0("graficas/eda_cat_", v, ".png"), p, width = 8, height = 4)
+}
+```
+
+**Variables no imputadas**
+
+```{r eda-no-imputadas, fig.width=7, fig.height=3.5}
+vars_num_noimputadas <- setdiff(
+  names(datos_imputados)[sapply(datos_imputados, is.numeric)],
+  c(vars_imputar, "Price")
+)
+
+for (v in vars_num_noimputadas) {
+  p <- ggplot(data.frame(val = datos_imputados[[v]]), aes(x = val)) +
+    geom_histogram(bins = 30, fill = "coral", color = "white") +
+    labs(title = paste("Distribucion de", v), x = v, y = "Frecuencia") +
+    theme_minimal(base_size = 11)
+  print(p)
+  ggsave(paste0("graficas/eda_noimputed_", v, ".png"), p, width = 7, height = 3.5)
+}
+
+p_price <- ggplot(data.frame(val = datos_limpios$Price[!is.na(datos_limpios$Price)]),
+                  aes(x = val)) +
+  geom_histogram(bins = 50, fill = "coral", color = "white") +
+  labs(title = "Distribucion de Price (valores disponibles)",
+       x = "Price (MAD)", y = "Frecuencia") +
+  theme_minimal(base_size = 11)
+print(p_price)
+ggsave("graficas/eda_price.png", p_price, width = 7, height = 3.5)
+
+fo_tab <- as.data.frame(table(datos_limpios$First.Owner[!is.na(datos_limpios$First.Owner)]))
+names(fo_tab) <- c("Valor", "Frecuencia")
+p_fo <- ggplot(fo_tab, aes(x = Valor, y = Frecuencia)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "white") +
+  labs(title = "Distribucion de First.Owner", x = "", y = "Frecuencia") +
+  theme_minimal(base_size = 11)
+print(p_fo)
+ggsave("graficas/eda_firstowner.png", p_fo, width = 5, height = 4)
+```
+
+```{r eda-categoricas-noimputadas, fig.width=8, fig.height=4}
+vars_cat_noimputadas <- setdiff(
+  names(datos_imputados)[sapply(datos_imputados, is.factor)],
+  c(vars_imputar, "First.Owner", "BrandModel", "Location", "Sector", "Origin")
+)
+
+for (v in vars_cat_noimputadas) {
+  tab <- as.data.frame(sort(table(datos_imputados[[v]]), decreasing = TRUE))
+  names(tab) <- c("Nivel", "Frecuencia")
+  tab <- head(tab, 10)
+
+  p <- ggplot(tab, aes(x = reorder(Nivel, -Frecuencia), y = Frecuencia)) +
+    geom_bar(stat = "identity", fill = "coral", color = "white") +
+    labs(title = paste("Distribucion de", v), x = "", y = "Frecuencia") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  print(p)
+  ggsave(paste0("graficas/eda_cat_noimputada_", v, ".png"), p, width = 7, height = 4)
+}
+```
+
+## Anexo III. Resultados detallados de clasificación
+
+```{r anexo-cls-logit, echo=FALSE}
+knitr::kable(or_df, caption = "Tabla A2. Odds ratios de la regresion logistica.")
+
+knitr::kable(mc_logit$table,
+             caption = "Tabla A3. Matriz de confusion — Regresion logistica.")
+met_all_logit <- c(met_logit, AUC = round(as.numeric(auc_logit), 4))
+knitr::kable(data.frame(Metrica = names(met_all_logit), Valor = unname(met_all_logit)),
+             row.names = FALSE,
+             caption = "Tabla A4. Metricas — Regresion logistica.")
+```
+
+```{r anexo-cls-cart, fig.width=8, fig.height=6}
+rpart.plot(modelo_arbol$finalModel, type = 2, extra = 104, fallen.leaves = TRUE,
+           main = "Arbol CART — First.Owner")
+
+knitr::kable(mc_arbol$table,
+             caption = "Tabla A5. Matriz de confusion — Arbol CART.")
+met_all_arbol <- c(met_arbol, AUC = round(as.numeric(auc_arbol), 4))
+knitr::kable(data.frame(Metrica = names(met_all_arbol), Valor = unname(met_all_arbol)),
+             row.names = FALSE,
+             caption = "Tabla A6. Metricas — Arbol CART.")
+```
+
+```{r anexo-cls-rf, fig.width=7, fig.height=5}
+plot(varImp(modelo_rf, scale = TRUE), main = "Importancia de variables — RF (First.Owner)")
+
+knitr::kable(mc_rf$table,
+             caption = "Tabla A7. Matriz de confusion — Random Forest.")
+met_all_rf2 <- c(met_rf, AUC = round(as.numeric(auc_rf), 4))
+knitr::kable(data.frame(Metrica = names(met_all_rf2), Valor = unname(met_all_rf2)),
+             row.names = FALSE,
+             caption = "Tabla A8. Metricas — Random Forest.")
+```
+
+```{r anexo-cls-svm, echo=FALSE}
+knitr::kable(mc_svm$table,
+             caption = "Tabla A9. Matriz de confusion — SVM lineal.")
+met_all_svm2 <- c(met_svm, AUC = round(as.numeric(auc_svm), 4))
+knitr::kable(data.frame(Metrica = names(met_all_svm2), Valor = unname(met_all_svm2)),
+             row.names = FALSE,
+             caption = "Tabla A10. Metricas — SVM lineal.")
+```
+
+```{r anexo-cls-nb, echo=FALSE}
+knitr::kable(mc_nb$table,
+             caption = "Tabla A11. Matriz de confusion — Naive Bayes.")
+met_all_nb2 <- c(met_nb, AUC = round(as.numeric(auc_nb), 4))
+knitr::kable(data.frame(Metrica = names(met_all_nb2), Valor = unname(met_all_nb2)),
+             row.names = FALSE,
+             caption = "Tabla A12. Metricas — Naive Bayes.")
+```
+
+## Anexo IV. Diagnósticos e interpretabilidad de regresión
+
+**Diagnóstico de residuos — LM sobre log(Price)**
+
+```{r anexo-lm-qqplot, fig.width=6, fig.height=4}
+set.seed(99)
+res_sample <- sample(residuals(mod.lm), 5000)
+res_df     <- data.frame(residuos = res_sample)
+p_qq <- ggplot(res_df, aes(sample = residuos)) +
+  stat_qq(alpha = 0.35, size = 0.7, color = "#2CA02C") +
+  stat_qq_line(color = "red", linewidth = 0.9) +
+  labs(title = "QQ-plot de residuos — LM sobre log(Price)",
+       x = "Cuantiles teoricos", y = "Cuantiles muestrales") +
+  theme_minimal(base_size = 12)
+print(p_qq)
+ggsave("graficas/reg_lm_qqplot.png", p_qq, width = 6, height = 4)
+```
+
+El QQ-plot muestra un comportamiento próximo a la distribución normal en la región central. Las desviaciones en las colas corresponden a vehículos con precios muy alejados del rango habitual, inevitables en datos de anuncios reales. La transformación logarítmica ha corregido con éxito la asimetría severa de los precios en escala original.
+
+**Árbol CART podado — Price**
+
+```{r anexo-cart-tree, fig.width=10, fig.height=7}
+rpart.plot(mod.rt, main = "Arbol CART podado (regla 1-SE) — Price", type = 2, extra = 101)
+```
+
+**Importancia de variables — Random Forest**
+
+```{r anexo-reg-rf-importancia-tabla, echo=FALSE}
+imp_rf_df <- as.data.frame(importance(mod.rf))
+imp_rf_df <- imp_rf_df[order(-imp_rf_df$`%IncMSE`), ]
+knitr::kable(round(imp_rf_df, 2),
+             caption = "Tabla A13. Importancia de variables — Random Forest (Price).")
+```
+
+**ALE y LIME — interpretabilidad del Random Forest**
+
+```{r anexo-iml-setup}
+options(future.globals.maxSize = 3000 * 1024^2)
+X_train <- train.rf[, setdiff(names(train.rf), "Price")]
+y_train <- train.rf$Price
+X_test  <- test.rf[,  setdiff(names(test.rf),  "Price")]
+y_test  <- test_reg$Price
+predictor.rf <- Predictor$new(model = mod.rf, data = X_train, y = y_train)
+```
+
+**Efectos ALE (Accumulated Local Effects):** a diferencia de los gráficos de dependencia parcial (PDP), los ALE no sufren el sesgo de correlación entre predictores. El eje vertical representa la desviación media del precio predicho respecto al precio medio, condicionada a los datos observados.
+
+```{r reg-ale-age, fig.width=5, fig.height=4}
+ale.age <- FeatureEffect$new(predictor.rf, feature = "Age", method = "ale", grid.size = 20)
+p_ale_age <- plot(ale.age)
+print(p_ale_age)
+ggsave("graficas/reg_ale_age.png", p_ale_age, width = 5, height = 4)
+```
+
+El gráfico ALE de `Age` revela una depreciación no lineal y fuertemente decreciente: los vehículos de menos de 5 años acumulan una prima muy significativa sobre el precio medio. Esta prima se desvanece de forma pronunciada hasta los 15 años y luego se estabiliza, lo que justifica la superioridad del *Random Forest* sobre la regresión lineal.
+
+```{r reg-ale-mileage, fig.width=5, fig.height=4}
+ale.mileage <- FeatureEffect$new(predictor.rf, feature = "Mileage_mid", method = "ale", grid.size = 20)
+p_ale_mil <- plot(ale.mileage)
+print(p_ale_mil)
+ggsave("graficas/reg_ale_mileage.png", p_ale_mil, width = 5, height = 4)
+```
+
+El ALE de `Mileage_mid` muestra una penalización pronunciada hasta los 200.000 km que luego se estabiliza. Su impacto total es considerablemente menor que el de la antigüedad.
+
+**LIME (Local Interpretable Model-agnostic Explanations):** LIME entrena localmente un modelo lineal simple alrededor de una observación de interés para explicar *por qué el modelo asignó ese precio específico*.
+
+```{r reg-lime, fig.width=6, fig.height=4}
+obs1 <- X_test[1, , drop = FALSE]
+
+set.seed(42)
+lime1 <- LocalModel$new(predictor.rf, x.interest = obs1, k = 5)
+p_lime <- plot(lime1)
+print(p_lime)
+ggsave("graficas/reg_lime_obs1.png", p_lime, width = 6, height = 4)
+```
+
+# Referencias

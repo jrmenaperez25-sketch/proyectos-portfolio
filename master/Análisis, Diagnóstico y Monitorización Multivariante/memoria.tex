@@ -1,0 +1,555 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[spanish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{parskip}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue}
+\setstretch{1.15}
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small Análisis Multivariante — Africa Soil Property Prediction}
+\lhead{\small UPV}
+\cfoot{\thepage}
+
+\title{
+  \vspace{-1cm}
+  {\Large \textbf{Análisis, Monitorización y Diagnóstico de\\[4pt]
+  Procesos Multivariantes}}\\[0.8cm]
+  {\large Africa Soil Property Prediction Challenge:\\[2pt]
+  Análisis Exploratorio, PCA y PLS sobre Espectros MIR de Suelo}\\[1cm]
+  {\normalsize Universitat Politècnica de València}
+}
+\author{José Ramón Mena Pérez}
+\date{Curso 2025--2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{fancy}
+\vspace{1cm}
+
+\tableofcontents
+\newpage
+
+%=============================================================================
+\section{Introducción}
+%=============================================================================
+
+\subsection{Descripción del conjunto de datos}
+
+El conjunto de datos utilizado en este trabajo procede del concurso \textit{Africa Soil
+Property Prediction Challenge}, celebrado en la plataforma Kaggle en 2014 bajo el
+auspicio del proyecto AfSIS (\textit{Africa Soil Information Service}). El objetivo del
+concurso era demostrar que la espectroscopía infrarroja de transformada de Fourier (FTIR)
+en el rango del infrarrojo medio (\textit{Mid-Infrared}, MIR), combinada con técnicas de
+quimiometría multivariante, puede predecir propiedades físico-químicas del suelo de forma
+rápida, no destructiva y a bajo coste, en contraposición a los métodos de análisis de
+laboratorio convencionales.
+
+El conjunto de entrenamiento contiene \textbf{1157 muestras} de suelo procedentes de
+distintas localizaciones de África. Cada muestra pertenece a una de dos profundidades de
+extracción: \textbf{Topsoil} (capa superficial, 0--20 cm) o \textbf{Subsoil} (capa
+profunda, 20--50 cm). Un rasgo estructural clave del diseño experimental es que las
+muestras están recogidas \textbf{en parejas}: en cada ubicación geográfica se extrae una
+muestra de cada profundidad. Esto genera una dependencia entre observaciones que debe
+tenerse en cuenta en la validación cruzada. Del total de muestras, 565 forman parejas
+completas (1130 observaciones), 11 son singletons (sin pareja), y 4 ubicaciones contienen
+más de dos muestras. El dataset presenta 581 muestras de Topsoil y 576 de Subsoil.
+
+Cada muestra se caracteriza mediante tres bloques de información:
+
+\begin{enumerate}
+  \item \textbf{Espectro MIR} (3578 variables): valores de absorbancia a lo largo del
+        rango espectral de 600 a 7498 cm$^{-1}$, con una resolución aproximada de
+        2 cm$^{-1}$. Las variables se denominan \texttt{m600}, \texttt{m601}, \ldots,
+        \texttt{m7497}.
+
+  \item \textbf{Variables auxiliares} (15 variables): covariables geoespaciales obtenidas
+        de productos de teledetección satelital, que caracterizan el entorno de cada
+        punto de muestreo. No son medidas de laboratorio sino información contextual.
+
+  \item \textbf{Variables respuesta} (5 variables): propiedades del suelo que se desea
+        predecir: calcio intercambiable (\textit{Ca}), fósforo disponible (\textit{P}),
+        pH del suelo, carbono orgánico del suelo (\textit{SOC}) y contenido en arena
+        (\textit{Sand}).
+\end{enumerate}
+
+\subsection{Objetivos}
+
+El presente trabajo aborda el análisis multivariante de este conjunto de datos desde una
+perspectiva metodológica rigurosa, con los siguientes objetivos específicos:
+
+\begin{enumerate}
+  \item \textbf{Explorar la estructura del espacio espectral} mediante Análisis de
+        Componentes Principales (PCA), identificando las direcciones de máxima varianza y
+        evaluando en qué medida las primeras componentes capturan la variabilidad
+        relevante del espectro MIR.
+
+  \item \textbf{Establecer el número óptimo de componentes} mediante validación cruzada
+        de diez pliegues agrupada por pares geográficos, calculando los estadísticos
+        $Q^2$ (capacidad predictiva) y $R^2_X$ (varianza explicada).
+
+  \item \textbf{Detectar anomalías y observaciones influyentes} mediante el estadístico
+        $T^2$ de Hotelling (distancia en el espacio del modelo) y la Suma de Cuadrados
+        de Residuos (SCR, distancia fuera del modelo), construyendo el mapa de influencia
+        correspondiente.
+
+  \item \textbf{Predecir las variables respuesta} mediante Regresión de Mínimos
+        Cuadrados Parciales (PLS), tanto de forma independiente para cada target
+        (PLS1) como de forma conjunta (PLS2), incluyendo las variables auxiliares
+        y evaluando su contribución mediante el estadístico VIP
+        (\textit{Variable Importance in Projection}).
+
+  \item \textbf{Analizar la dificultad intrínseca del problema}, en especial la
+        predicción del fósforo disponible, cuya señal espectral es indirecta, su
+        distribución fuertemente asimétrica y cuya relación con el espectro MIR
+        está mediada por la interacción con otros minerales del suelo.
+\end{enumerate}
+
+La importancia de este problema es significativa: disponer de modelos de calibración
+espectral fiables permitiría sustituir análisis de laboratorio que tardan días o semanas
+por medidas espectrales que se realizan en segundos. Esto podría transformar la gestión
+agrícola en regiones donde los recursos analíticos son limitados.
+
+%=============================================================================
+\section{Análisis Exploratorio de Datos (EDA)}
+%=============================================================================
+
+\subsection{Variables espectrales: el espectro MIR}
+
+La espectroscopía infrarroja media con transformada de Fourier (FTIR-MIR) mide la
+\textbf{absorbancia} de la muestra en función del número de onda. La absorbancia en un
+número de onda determinado se define como:
+%
+\begin{equation}
+  A(\tilde{\nu}) = \log_{10}\!\left(\frac{I_0(\tilde{\nu})}{I(\tilde{\nu})}\right),
+\end{equation}
+%
+donde $I_0$ es la intensidad del haz de referencia e $I$ la intensidad transmitida (o
+reflejada, en la modalidad DRIFTS empleada en este dataset) tras interactuar con la
+muestra. Un valor elevado de absorbancia indica que la muestra absorbe fuertemente en esa
+frecuencia, lo que ocurre cuando la energía del fotón coincide con alguna frecuencia
+vibracional de los enlaces moleculares presentes en el suelo.
+
+A diferencia de un espectrómetro dispersivo, el instrumento FTIR mide
+\textbf{simultáneamente todo el espectro}: el espejo móvil del interferómetro Michelson
+recorre un rango de distancias a velocidad constante, generando un interferograma (señal
+en el dominio del tiempo). La transformada de Fourier de este interferograma produce el
+espectro completo de una sola vez, lo que hace el análisis extremadamente rápido.
+
+El espectro MIR se divide convencionalmente en cuatro regiones con interpretación
+diferenciada:
+
+\begin{itemize}
+  \item \textbf{$>$4000 cm$^{-1}$}: sobretonos de enlaces O--H y C--H.
+  \item \textbf{1800--4000 cm$^{-1}$}: grupos funcionales con bandas intensas y
+        asignables (grupos carbonilo C$=$O, carbonatos, materia orgánica).
+  \item \textbf{900--1800 cm$^{-1}$}: región de \textit{huella dactilar}
+        (\textit{fingerprint}). En esta zona se solapan decenas de vibraciones de
+        deformación y torsión que involucran a la molécula entera. El patrón resultante
+        es único para cada compuesto, como una huella dactilar, lo que hace imposible
+        asignar bandas individuales pero convierte la región en la más discriminativa
+        para suelos (silicatos, arcillas, materia orgánica).
+  \item \textbf{$<$900 cm$^{-1}$}: vibraciones de la red inorgánica (minerales de arcilla,
+        cuarzo, óxidos de hierro).
+\end{itemize}
+
+La figura~\ref{fig:eda_spectrum} muestra el espectro medio de las 1157 muestras junto con
+la banda de $\pm 1$ desviación típica, y la figura~\ref{fig:eda_depth} compara los
+espectros medios de Topsoil y Subsoil. Se observa que la variabilidad es muy elevada en
+la región de huella dactilar, reflejando la diversidad mineralógica y orgánica de los
+suelos africanos. Los Topsoils presentan sistemáticamente mayor absorbancia en la región
+orgánica (1800--4000 cm$^{-1}$), coherente con un mayor contenido de materia orgánica
+en la capa superficial.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{figures/eda_spectrum.png}
+  \caption{Espectro MIR medio de las 1157 muestras (línea azul) con banda de
+           $\pm 1$ desviación típica (área sombreada). Las regiones espectrales se
+           distinguen por color de fondo.}
+  \label{fig:eda_spectrum}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{figures/eda_depth_spectra.png}
+  \caption{Espectro MIR medio por profundidad (Topsoil vs.\ Subsoil). Las diferencias
+           en la región orgánica son consistentes con el gradiente de materia orgánica
+           con la profundidad.}
+  \label{fig:eda_depth}
+\end{figure}
+
+\subsection{Variables auxiliares}
+
+Las 15 variables auxiliares provienen de seis sensores o productos satelitales distintos,
+y caracterizan el entorno físico de cada punto de muestreo (tabla~\ref{tab:aux}). Son
+variables de contexto geoespacial, no medidas del suelo.
+
+\begin{table}[H]
+  \centering
+  \caption{Variables auxiliares agrupadas por sensor/producto.}
+  \label{tab:aux}
+  \begin{tabular}{lll}
+    \toprule
+    \textbf{Bloque} & \textbf{Variables} & \textbf{Fuente} \\
+    \midrule
+    Topografía    & ELEV, RELI, CTI         & SRTM \\
+    Clima         & TMAP, TMFI              & WorldClim \\
+    Temperatura   & LSTD, LSTN              & MODIS MOD11A2 \\
+    Reflectancia  & REF1, REF2, REF3, REF7  & MODIS MOD09A1 \\
+    Albedo        & BSAN, BSAS, BSAV        & MODIS MOD43A3 \\
+    Vegetación    & EVI                     & MODIS MOD13A2 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Un rasgo importante de estas variables es que las muestras de la misma ubicación
+geográfica comparten \textbf{exactamente los mismos valores auxiliares}: dado que el
+píxel satelital tiene una resolución de cientos de metros, un Topsoil y su Subsoil
+correspondiente caen en el mismo píxel y reciben idénticos valores. Esto ha permitido
+identificar las 565 parejas del dataset comparando los vectores de variables auxiliares.
+La figura~\ref{fig:eda_aux} muestra la distribución estandarizada de las 15 variables.
+Las variables de reflectancia y albedo presentan mayor variabilidad relativa, mientras
+que ELEV y EVI tienen distribuciones más simétricas.
+
+\textbf{Uso en los análisis:} las variables auxiliares se utilizarán únicamente en la
+etapa de \textbf{PLS} como predictores adicionales. En el \textbf{PCA} se analizará
+exclusivamente el espacio espectral, y las variables auxiliares se proyectarán a
+posteriori como variables suplementarias (mediante correlaciones loading) para
+interpretar las componentes.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{figures/eda_auxiliares.png}
+  \caption{Distribución estandarizada de las variables auxiliares, coloreadas por bloque
+           de sensor.}
+  \label{fig:eda_aux}
+\end{figure}
+
+\subsection{Variables respuesta}
+
+Las cinco variables respuesta del dataset (\textit{Ca}, \textit{P}, \textit{pH},
+\textit{SOC}, \textit{Sand}) han sido sometidas por los organizadores del concurso a un
+preprocesado previo: primero una \textbf{transformación monotónica} (tipo logarítmica o
+Box-Cox) para reducir la asimetría, y después una \textbf{estandarización z}
+(media$\approx$0, desviación típica$\approx$1), calculada conjuntamente sobre las 1884
+observaciones de entrenamiento y test del concurso.
+
+Esto implica que los valores que observamos en el dataset \textbf{no están en unidades
+físicas originales} (mg/kg, \%, etc.), sino en la escala transformada. Los predictores
+espectrales y auxiliares, en cambio, \textbf{no han sido preprocesados}: se reciben en
+sus unidades crudas (absorbancia para el espectro, unidades propias de cada sensor para
+las auxiliares), y será responsabilidad del analista aplicar el escalado adecuado antes
+de cada análisis.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{figures/eda_targets.png}
+  \caption{Distribución de las cinco variables respuesta tras la transformación monotónica
+           y estandarización. Se indican la media y la asimetría de cada distribución.
+           El fósforo (P) presenta la asimetría más extrema (7.45), evidenciando la
+           presencia de valores muy elevados que dificultan su modelización.}
+  \label{fig:eda_targets}
+\end{figure}
+
+Destaca el caso del \textbf{fósforo} (P), con asimetría 7.45 incluso después de la
+transformación. Su señal espectral en MIR es indirecta: el P no absorbe directamente en
+este rango, sino que su concentración se correlaciona débilmente con la materia orgánica
+y ciertos minerales. Esto hace que sea el target más difícil de predecir, como se
+confirmará en el análisis PLS.
+
+%=============================================================================
+\section{Análisis de Componentes Principales (PCA)}
+%=============================================================================
+
+\subsection{Preprocesado: autoscaling}
+
+Antes de aplicar el PCA, se aplica un \textbf{autoscaling} (estandarización centrado y
+escalado) a la matriz espectral $\mathbf{X}$ de dimensiones $1157 \times 3578$:
+%
+\begin{equation}
+  x_{ik}^* = \frac{x_{ik} - \bar{x}_k}{s_k},
+\end{equation}
+%
+donde $\bar{x}_k$ y $s_k$ son la media y desviación típica de la variable $k$ calculadas
+sobre las 1157 observaciones. Tras el autoscaling, cada variable tiene media 0 y varianza
+1, de modo que todas contribuyen por igual al análisis independientemente de su magnitud
+absoluta. Dado que las variables espectrales tienen unidades de absorbancia y rangos
+similares, el efecto principal del autoscaling es eliminar la línea base y el offset
+instrumental, poniendo el foco en la forma del espectro.
+
+\subsection{Criterio de selección del número de componentes}
+
+La figura~\ref{fig:pca_kaiser} muestra la varianza explicada por las cinco primeras
+componentes principales. La primera componente (PC1) recoge el \textbf{76.3\%} de la
+varianza total, una proporción extraordinariamente elevada que refleja la alta
+correlación entre longitudes de onda adyacentes en espectros MIR: todos los espectros
+tienen una forma global similar (misma línea base, mismas bandas dominantes de cuarzo y
+materia orgánica), y el PC1 captura precisamente esa tendencia común. Las componentes
+PC2 y PC3 explican el 9.5\% y el 7.5\% respectivamente, recogiendo variaciones en la
+forma del espectro asociadas a diferencias mineralógicas y en la profundidad de muestreo.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.80\textwidth]{figures/pca_kaiser.png}
+  \caption{Varianza explicada (barras, eje izquierdo) y acumulada (línea, eje derecho)
+           por las cinco primeras componentes principales. El autoscaling garantiza que
+           eigenvalores superiores a la unidad indican componentes que explican más
+           varianza que una variable individual.}
+  \label{fig:pca_kaiser}
+\end{figure}
+
+\subsection{Validación cruzada: $Q^2$ y $R^2_X$}
+
+Para validar el modelo PCA se ha realizado una \textbf{validación cruzada de diez
+pliegues agrupada por pares geográficos} (GroupKFold). El agrupamiento es esencial:
+dado que cada ubicación genera un Topsoil y un Subsoil con espectros muy similares,
+permitir que estén en pliegues distintos inflaría artificialmente el $Q^2$. Al agrupar
+por ubicación, las parejas permanecen siempre en el mismo pliegue.
+
+En cada pliegue, el escalado se ajusta \textbf{únicamente sobre los datos de
+entrenamiento} y se aplica al conjunto de test con los parámetros del train, evitando
+así el data leakage.
+
+El estadístico $Q^2$ para $A$ componentes se calcula como:
+%
+\begin{equation}
+  Q^2_A = 1 - \frac{\text{PRESS}_A}{\text{TSS}},
+  \qquad
+  \text{PRESS}_A = \sum_{i \in \text{test}} \|\mathbf{x}_i - \hat{\mathbf{x}}_i^{(A)}\|^2,
+  \qquad
+  \text{TSS} = \sum_{i \in \text{test}} \|\mathbf{x}_i\|^2,
+\end{equation}
+%
+donde $\hat{\mathbf{x}}_i^{(A)} = \mathbf{t}_i^{(A)} \mathbf{P}^{(A)\top}$ es la
+reconstrucción de la muestra $i$ usando $A$ componentes.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{figures/pca_cv.png}
+  \caption{Izquierda: $R^2_X$ medio por componente (varianza de $\mathbf{X}$ capturada)
+           con barras de error ($\pm 1$ std entre pliegues). Derecha: $Q^2$ medio de
+           validación cruzada con banda de $\pm 1$ std. Los resultados son muy
+           estables entre pliegues, confirmando la robustez del modelo.}
+  \label{fig:pca_cv}
+\end{figure}
+
+Los resultados de la tabla~\ref{tab:cv} confirman que la estructura espectral es
+extremadamente estable: el $Q^2$ supera 0.96 con tan solo $A=5$ componentes,
+indicando que el modelo PCA con pocas componentes es suficiente para reconstruir
+fielmente cualquier espectro MIR del dataset. La baja desviación típica entre pliegues
+confirma la ausencia de sobreajuste.
+
+\begin{table}[H]
+  \centering
+  \caption{Resultados de validación cruzada (media $\pm$ std sobre 10 pliegues).}
+  \label{tab:cv}
+  \begin{tabular}{ccccc}
+    \toprule
+    $A$ & $R^2_X$ (\%) & std & $Q^2$ & std \\
+    \midrule
+    1 & 76.32 & 0.219 & 0.761 & 0.028 \\
+    2 & 85.80 & --    & 0.855 & 0.018 \\
+    3 & 93.31 & --    & 0.932 & 0.009 \\
+    4 & 94.96 & --    & 0.948 & 0.007 \\
+    5 & 96.38 & --    & 0.963 & 0.005 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Score plot: Topsoil vs.\ Subsoil}
+
+La figura~\ref{fig:pca_scores} muestra el diagrama de puntuaciones (score plot) en el
+plano PC1--PC2 para las 1157 muestras, distinguiendo entre Topsoil (azul) y Subsoil
+(rojo). Las elipses de confianza al 95\% se calculan a partir de la distribución
+chi-cuadrado con 2 grados de libertad.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.80\textwidth]{figures/pca_scores.png}
+  \caption{Score plot PC1 vs.\ PC2. Las elipses representan la región de confianza al
+           95\% para cada grupo bajo la suposición de normalidad multivariante.}
+  \label{fig:pca_scores}
+\end{figure}
+
+Las elipses de Topsoil y Subsoil se solapan considerablemente a lo largo de PC1,
+indicando que la primera componente no discrimina la profundidad. Sin embargo, en la
+dirección PC2 existe una ligera separación: los Topsoils tienden a tener valores de PC2
+más positivos, coherente con su mayor contenido en materia orgánica.
+
+\subsection{Loading plots: interpretación espectral}
+
+Los loadings $p_{1k}$ y $p_{2k}$ representan la contribución de cada variable espectral
+a cada componente. La figura~\ref{fig:pca_loading1} muestra el loading plot clásico
+$p_1$ vs.\ $p_2$ para las 3578 variables espectrales. Los puntos se colorean por región
+espectral y se etiquetan cada 10 cm$^{-1}$ para facilitar la lectura. Las flechas
+indican la dirección de recorrido del espectro de 7498 a 600 cm$^{-1}$.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\textwidth]{figures/pca_loading1.png}
+  \caption{Loading plot PC1 vs.\ PC2 para las variables espectrales. La trayectoria
+           conecta los loadings en orden decreciente de número de onda. Las etiquetas
+           aparecen cada 10 cm$^{-1}$.}
+  \label{fig:pca_loading1}
+\end{figure}
+
+\subsection{Proyección de variables auxiliares}
+
+Las variables auxiliares no forman parte del modelo PCA, pero pueden proyectarse como
+\textbf{variables suplementarias} calculando su correlación loading con cada score:
+%
+\begin{equation}
+  r(\text{aux}_j, \mathbf{t}_a) = \text{corr}(\mathbf{x}_j^{\text{aux}}, \mathbf{t}_a),
+\end{equation}
+%
+lo que indica la correlación lineal entre la variable auxiliar y el score de la
+componente $a$. Estos coeficientes se escalan proporcionalmente para representarlos en
+el mismo espacio que los loadings espectrales.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\textwidth]{figures/pca_loading2.png}
+  \caption{Loading plot con variables auxiliares proyectadas (rombos coloreados por
+           bloque de sensor). Las variables de temperatura superficial (LSTD, LSTN) y
+           reflectancia se proyectan en cuadrantes opuestos a las de elevación y clima,
+           reflejando gradientes geográficos en la distribución de los suelos.}
+  \label{fig:pca_loading2}
+\end{figure}
+
+\subsection{Detección de anomalías: $T^2$ de Hotelling y SCR}
+
+Para la detección de observaciones anómalas se utilizan dos estadísticos complementarios
+con $A=5$ componentes:
+
+\subsubsection*{$T^2$ de Hotelling}
+
+Mide la distancia de cada observación al centroide del modelo \textbf{dentro} del
+subespacio de las $A$ componentes:
+%
+\begin{equation}
+  T^2_i = \sum_{a=1}^{A} \frac{t_{ia}^2}{\lambda_a},
+\end{equation}
+%
+donde $\lambda_a$ es el autovalor (varianza) de la componente $a$. El límite de control
+al nivel $\alpha$ se obtiene a partir de la distribución $F$:
+%
+\begin{equation}
+  \text{UCL}_{T^2,\alpha} = \frac{A(n-1)}{n-A}\, F_{\alpha,A,n-A}.
+\end{equation}
+
+\subsubsection*{Suma de Cuadrados de Residuos (SCR)}
+
+Mide la distancia de cada observación al subespacio del modelo, es decir, lo que el
+modelo \textbf{no} captura:
+%
+\begin{equation}
+  \text{SCR}_i = \|\mathbf{x}_i - \hat{\mathbf{x}}_i\|^2
+               = \|\mathbf{x}_i - \mathbf{t}_i \mathbf{P}^\top\|^2.
+\end{equation}
+%
+El límite de control se calcula mediante la aproximación de Jackson--Mudholkar, basada
+en los autovalores residuales $\lambda_{A+1}, \ldots, \lambda_p$.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\textwidth]{figures/pca_t2.png}
+  \caption{Carta de control del estadístico $T^2$ de Hotelling ($A=5$). La línea
+           naranja representa el UCL al 95\%, la roja al 99\% y la punteada el umbral
+           de $3\times\text{UCL}_{99\%}$.}
+  \label{fig:pca_t2}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\textwidth]{figures/pca_scr.png}
+  \caption{Carta de control de la SCR (Jackson--Mudholkar, $A=5$). Se identifica un
+           número reducido de observaciones con residuos anormalmente elevados,
+           indicando espectros que no se ajustan bien al modelo.}
+  \label{fig:pca_scr}
+\end{figure}
+
+La figura~\ref{fig:pca_outlier} combina ambos estadísticos en el \textbf{mapa de
+influencia}. La interpretación de los cuadrantes es la siguiente:
+
+\begin{itemize}
+  \item $T^2$ alto, SCR bajo: la observación es extrema \textbf{dentro} del modelo
+        (alto leverage), pero bien ajustada.
+  \item $T^2$ bajo, SCR alto: la observación tiene estructura anómala que el modelo
+        \textbf{no captura} (outlier de residuo).
+  \item $T^2$ alto, SCR alto: anomalía en ambas dimensiones, la más preocupante.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\textwidth]{figures/pca_outlier.png}
+  \caption{Mapa de influencia $T^2$ vs.\ SCR. Las observaciones marcadas con estrella
+           ($\bigstar$) superan $3\times\text{UCL}_{99\%}$ en al menos uno de los dos
+           estadísticos. Las observaciones 293 y 294, correspondientes a la misma
+           ubicación geográfica (una pareja Topsoil--Subsoil), presentan $T^2$ y SCR
+           extremadamente elevados y serían candidatas a eliminación.}
+  \label{fig:pca_outlier}
+\end{figure}
+
+El análisis identifica las observaciones \textbf{293 y 294} como las únicas que superan
+el umbral de $3\times\text{UCL}_{99\%}$. El hecho de que sean una pareja
+(misma ubicación) sugiere un problema sistemático en la recogida o el procesado de esa
+muestra, más que un error aislado. Para los análisis PLS subsiguientes se evaluará el
+impacto de su exclusión.
+
+%=============================================================================
+\section{Regresión PLS}
+%=============================================================================
+
+% ─── COMPLETAR EN LA SIGUIENTE ENTREGA ───────────────────────────────────────
+%
+%  Contenido previsto:
+%   4.1  Preprocesado y validación cruzada PLS (GroupKFold por pares)
+%   4.2  PLS1 independiente por target (Ca, pH, SOC, Sand) + fósforo separado
+%   4.3  PLS2 conjunto (4 targets simultáneos)
+%   4.4  Score plot PLS (T vs U) y relación interna
+%   4.5  Loading plot y peso plot (W*)
+%   4.6  VIP — identificación de variables espectrales relevantes
+%   4.7  Comparativa PLS1 vs PLS2 y efecto de variables auxiliares
+%
+% ─────────────────────────────────────────────────────────────────────────────
+
+\newpage
+
+%=============================================================================
+\section*{Referencias}
+%=============================================================================
+
+\begin{enumerate}
+  \item Wold, S., Sjöström, M., \& Eriksson, L. (2001). PLS-regression: a basic tool
+        of chemometrics. \textit{Chemometrics and Intelligent Laboratory Systems},
+        58(2), 109--130.
+
+  \item Jackson, J.E., \& Mudholkar, G.S. (1979). Control procedures for residuals
+        associated with principal component analysis. \textit{Technometrics},
+        21(3), 341--349.
+
+  \item Nomikos, P., \& MacGregor, J.F. (1995). Multivariate SPC charts for monitoring
+        batch processes. \textit{Technometrics}, 37(1), 41--59.
+
+  \item Africa Soil Information Service (AfSIS). Kaggle Africa Soil Property Prediction
+        Challenge, 2014.
+        \url{https://www.kaggle.com/c/afsis-soil-properties}
+\end{enumerate}
+
+\end{document}
