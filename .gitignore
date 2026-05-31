@@ -2,3 +2,12 @@ master/Analisis-Multivariante/Vídeo AM.mp4
 **/.idea/
 **/__pycache__/
 *.pyc
+.Rhistory
+.RData
+.Rproj.user/
+.ipynb_checkpoints/
+*.aux
+*.log
+*.out
+*.synctex.gz
+~$*
