@@ -2,6 +2,11 @@
 
 Repositorio personal con proyectos, practicas y materiales organizados por bloque academico.
 
+> Si GitHub no renderiza algun notebook, abre el repositorio desde
+> [NBViewer](https://nbviewer.org/github/jrmenaperez25-sketch/proyectos-portfolio/tree/master/).
+> Los notebooks del repositorio han sido validados como JSON correcto; el fallo suele venir del visor
+> de GitHub cuando el archivo contiene salidas pesadas o rutas largas.
+
 ## Master en Analisis de Datos
 
 ### [Analisis Multivariante](./master/Analisis-Multivariante/)
