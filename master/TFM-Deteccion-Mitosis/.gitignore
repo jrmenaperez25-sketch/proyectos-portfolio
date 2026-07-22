@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Pesos y artefactos (no versionar)
+*.pth
+*.pt
+*.onnx
+*.joblib
+*.npz
+*.npy
+
+# Datos e imágenes de histopatología
+*.tiff
+*.tif
+*.svs
+*.ndpi
+
+# Salidas / runs / logs
+runs/
+Runs_*/
+outputs/
+*.log
+*.csv
+
+# Sistema
+.DS_Store

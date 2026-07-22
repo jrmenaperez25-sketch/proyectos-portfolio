@@ -1,0 +1,18 @@
+# Entorno usado en los experimentos (Python 3.10, CUDA 12.1, NVIDIA A100-40GB).
+# Instala torch/torchvision con el build CUDA que corresponda a tu máquina.
+torch==2.5.1
+torchvision==0.20.1
+rfdetr==1.6.5.post2
+ultralytics==8.4.31
+timm==1.0.27
+peft==0.19.0
+transformers==5.9.0
+supervision==0.27.0.post2
+numpy==2.2.6
+scikit-learn==1.7.2
+opencv-python==4.10.0.84
+pillow==12.2.0
+albumentations
+matplotlib
+pandas
+joblib

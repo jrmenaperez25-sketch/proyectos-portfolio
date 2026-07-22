@@ -9,6 +9,10 @@ Repositorio personal con proyectos, practicas y materiales organizados por bloqu
 
 ## Master en Analisis de Datos
 
+### [TFM - Deteccion de mitosis](./master/TFM-Deteccion-Mitosis/)
+
+Trabajo Fin de Master: deteccion automatica de figuras mitoticas en histopatologia de cancer de mama mediante deep learning. Sistema en dos fases (detector RF-DETR / YOLO26 + clasificador fundacional Virchow con LoRA) evaluado sobre MITOS-ATYPIA-14 y TUPAC16.
+
 ### [Analisis Multivariante](./master/Analisis-Multivariante/)
 
 Trabajo de analisis multivariante aplicado a datos de seguros medicos.
