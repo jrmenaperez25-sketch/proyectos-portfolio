@@ -1,20 +1,98 @@
-# Detección automática de figuras mitóticas en histopatología de cáncer de mama
+# Detección y clasificación de figuras mitóticas en histopatología de cáncer de mama
 
-Código de los experimentos del Trabajo Fin de Máster: un sistema de **detección de mitosis en dos
-fases** evaluado sobre **MITOS-ATYPIA-14** y **TUPAC16**.
+Sistema de **detección de mitosis en dos fases** sobre imagen histopatológica de cáncer de mama:
+un detector propone candidatos con alta sensibilidad y un **modelo fundacional de patología**
+adaptado con **LoRA** filtra los falsos positivos.
 
-- **Fase 1 — Detección:** un detector (RF-DETR *Small* o YOLO26 *Small*, con y sin *oversampling*)
-  propone candidatos de mitosis.
-- **Fase 2 — Clasificación:** un modelo fundacional (**Virchow** ViT-H/14) filtra falsos positivos,
-  en dos variantes: *frozen* (regresión logística sobre el embedding congelado) y **LoRA** (adaptación
-  de bajo rango).
+Este repositorio contiene el código de mi **Trabajo Fin de Máster** (Máster Universitario en
+Ingeniería Biomédica, Universitat Politècnica de València) y del artículo derivado, presentado en
+**CASEIB 2026**.
 
-Metodología **val-first**: la mejor configuración y los umbrales del clasificador se eligen en
-**validación** y se aplican sin cambios en test.
+- 📄 **TFM:** *Diseño, desarrollo y validación de un framework de detección y clasificación de figuras
+  mitóticas en histopatología de cáncer de mama* — [PDF](docs/TFM_completo.pdf)
+- 📝 **Artículo:** *Two-Phase Mitotic Figure Detection in Breast Cancer Histopathology: RF-DETR
+  Candidates and a LoRA-Adapted Pathology Foundation Model as False-Positive Filter* —
+  XLIV Congreso Anual de la Sociedad Española de Ingeniería Biomédica (CASEIB 2026), Valencia,
+  11–13 de noviembre de 2026.
+- 🏛️ Grupo **CVBLab**, instituto HUMAN-tech, UPV.
+
+---
+
+## El problema
+
+El **recuento de mitosis** es uno de los tres componentes del **grado de Nottingham**, la escala con
+la que se gradúa el cáncer de mama: mide cuánto está proliferando el tumor y condiciona el
+tratamiento. Hacerlo a mano es lento y subjetivo —el patólogo recorre la preparación al microscopio
+y cuenta figuras mitóticas una a una—, y automatizarlo es difícil por tres motivos:
+
+1. Una mitosis adopta formas muy distintas según la fase en la que esté la célula.
+2. Hay muchas células que **parecen** mitosis y no lo son: en los conjuntos usados aquí hay del
+   orden de **cuatro imitaciones por cada mitosis**.
+3. Cada escáner digitaliza con un color y un contraste distintos.
+
+## La propuesta: dos fases
+
+| Fase | Modelo | Qué hace |
+|---|---|---|
+| 1 · Detección | **RF-DETR Small** (transformer) o **YOLO26 Small** (convolucional) | Propone candidatos priorizando la sensibilidad: lo que no se detecta aquí ya no se recupera. |
+| 2 · Clasificación | **Virchow** (ViT-H/14, fundacional de patología), *frozen* o adaptado con **LoRA** | Recorta cada candidato y decide si es mitosis, filtrando los falsos positivos. |
+
+La clave de la segunda fase es **con qué se entrena**: los negativos no son parches cualesquiera,
+sino **los falsos positivos que el detector comete de verdad**. El clasificador aprende así a
+corregir los errores concretos de su detector.
+
+Metodología **val-first**: la configuración y el umbral de decisión (τ) se eligen en **validación**
+y se aplican sin cambios en test.
+
+## Resultados
+
+Detección considerada correcta si el centro predicho está a **≤ 7,5 µm** del centro anotado
+(criterio estándar de los retos MITOS/TUPAC/MIDOG).
+
+**MITOS-ATYPIA-14** (test: paciente A04)
+
+| Sistema | Precisión | Sensibilidad | F₁ |
+|---|---|---|---|
+| Solo detector (RF-DETR) | 0,470 | **0,909** | 0,619 |
+| + Virchow *frozen* (τ 0,30) | 0,734 | 0,619 | 0,671 |
+| + Virchow **LoRA** (τ 0,20) | **0,752** | 0,835 | **0,791** |
+
+**TUPAC16** (split por paciente)
+
+| Sistema | Precisión | Sensibilidad | F₁ |
+|---|---|---|---|
+| Solo detector (RF-DETR) | 0,405 | **0,939** | 0,566 |
+| + Virchow *frozen* (τ 0,25) | 0,632 | 0,759 | 0,689 |
+| + Virchow **LoRA** (τ 0,85) | **0,786** | 0,736 | **0,760** |
+
+**Conclusiones:**
+
+- La segunda fase **casi duplica la precisión sin perder apenas mitosis**: el F₁ sube de 0,619 a
+  0,791 en MITOS y de 0,566 a 0,760 en TUPAC.
+- La adaptación con **LoRA marca la diferencia** frente al modelo congelado: el *frozen* filtra bien
+  el fondo pero se lleva alrededor de un tercio de las mitosis reales; LoRA pierde apenas un 8 %.
+- El patrón **se repite en dos conjuntos independientes**, con escáneres y protocolos distintos.
+- **Generalización entre escáneres:** el detector transfiere razonablemente, pero el clasificador
+  se especializa en la apariencia de su dominio. El sistema **no es portable a otro escáner sin
+  readaptarlo**.
+
+## Datos
+
+- **MITOS-ATYPIA-14** — 16 pacientes, cada preparación digitalizada con dos escáneres (Aperio y
+  Hamamatsu). Validación cruzada *leave-one-patient-out*.
+- **TUPAC16** — 73 casos, ~1 900 mitosis frente a más de 5 000 imitaciones. Partición única por
+  paciente.
+
+Los dos son conjuntos públicos; el repositorio **no incluye las imágenes**, solo el código para
+reproducir los experimentos.
 
 ## Estructura del repositorio
 
 ```
+docs/
+    TFM_completo.pdf              Memoria del TFM
+    TFM_defensa.pdf               Presentación de la defensa
+
 01_deteccion_mitos_atypia14/   Fase 1 sobre MITOS-ATYPIA-14 (LOO, 10 folds)
     parches_mitos.py             Generación de parches: coverage (val), oversampling (train), sliding (test)
     entrenar_rfdetr.py           Entrenamiento RF-DETR Small (res 512)
@@ -42,51 +120,57 @@ Metodología **val-first**: la mejor configuración y los umbrales del clasifica
     frozen_end2end_y_fp.py          End-to-end del frozen + desglose de FP (empty vs hard)
     cross_scanner.py                Generalización entre escáneres MITOS <-> TUPAC
     fig_oversampling_vs_rot90.py    Figura: oversampling offline vs rotación 90°
+
+requirements.txt
 ```
 
-## Correspondencia con la memoria
+## Cómo se generan los parches
 
-| Capítulo del TFM | Carpeta |
-|---|---|
-| Fase 1 · Detección (MITOS-ATYPIA-14) | `01_deteccion_mitos_atypia14/` |
-| Fase 1 · Detección (TUPAC16) | `02_deteccion_tupac16/` |
-| Fase 2 · Clasificador fundacional (Virchow, frozen y LoRA) | `03_clasificador_virchow/` |
-| Evaluación end-to-end, desglose de FP, generalización entre escáneres y figuras | `04_evaluacion_y_figuras/` |
+- **Entrenamiento — *oversampling* offline:** cada mitosis se replica hasta 15 veces (5 ángulos × 3
+  reflexiones), y **cada copia se recorta volviendo al tejido original**, así aparece sobre un
+  contexto distinto y sin bordes rellenos artificialmente.
+- **Validación — *coverage*:** un parche por grupo de anotaciones, de modo que cada mitosis aparece
+  una sola vez y la métrica no queda inflada.
+- **Test — ventana deslizante:** se recorre el frame completo y después se fusionan las detecciones
+  repetidas.
 
-## Entorno
-
-Entrenado y evaluado en una **NVIDIA A100-PCIE-40 GB** (CUDA 12.1). Versiones principales en
-[`requirements.txt`](requirements.txt): PyTorch 2.5.1, rfdetr 1.6.5, ultralytics 8.4.31, peft 0.19,
-timm 1.0.27, transformers 5.9. Semilla fija **42** en todos los entrenamientos.
+## Reproducir
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt      # instalar torch/torchvision con el build CUDA adecuado
-```
-
-## Configuración de rutas
-
-Los scripts localizan datos, pesos y salidas bajo una raíz de trabajo configurable mediante la
-variable de entorno **`TFM_WORKSPACE`** (por defecto `/workspace`):
-
-```bash
+pip install -r requirements.txt
 export TFM_WORKSPACE=/ruta/a/tus/datos
 ```
 
-Las importaciones entre módulos (p. ej. `import parches_mitos`, `import virchow_nucleo`) se resuelven
-solas: cada script añade automáticamente al `PYTHONPATH` las carpetas hermanas del repositorio.
+Todos los entrenamientos usan **semilla 42**. Entrenado en una **NVIDIA A100-PCIE de 40 GB**
+(CUDA 12.1).
 
-## Datos y pesos
+## Stack
 
-Los conjuntos **MITOS-ATYPIA-14** y **TUPAC16** están sujetos a sus respectivas licencias y **no se
-incluyen** en este repositorio; deben solicitarse a sus organizadores. Tampoco se versionan los pesos
-entrenados ni los artefactos intermedios (checkpoints, embeddings, CSV de predicciones). El código se
-publica como **referencia reproducible** de la metodología descrita en la memoria.
+`PyTorch 2.5` · `rfdetr` · `ultralytics` (YOLO26) · `timm` (Virchow ViT-H/14) · `peft` (LoRA) ·
+`scikit-learn` · `Albumentations` · `supervision` · `OpenCV`
 
-## Notas
+**Configuración LoRA:** `r=4`, `alpha=8`, `dropout=0.1` sobre las proyecciones **qkv** de los 32
+bloques + cabeza lineal → **~0,66 M parámetros entrenables, un 0,1 % del modelo**.
 
-- El backbone Virchow (`hf-hub:paige-ai/Virchow`) requiere acceso a su repositorio en Hugging Face.
-- Criterio de emparejamiento por defecto: **distancia de centroide ≤ 7,5 µm** (estándar MIDOG); se
-  reporta también IoU ≥ 0,5. Punto de operación del detector: confianza 0,3.
-- No se incluyen aquí algunos scripts auxiliares de figuras/verificación ni el experimento paralelo
-  sobre MIDOG++; pueden facilitarse aparte si se necesitan.
+## Cómo citar
+
+```bibtex
+@inproceedings{menaperez2026mitosis,
+  title     = {Two-Phase Mitotic Figure Detection in Breast Cancer Histopathology:
+               RF-DETR Candidates and a LoRA-Adapted Pathology Foundation Model
+               as False-Positive Filter},
+  author    = {Mena-P{\'e}rez, Jos{\'e} Ram{\'o}n and Golfe, Alejandro and
+               Rodr{\'i}guez Albendea, V{\'i}ctor and Terradez, Liria and
+               Colomer, Adri{\'a}n},
+  booktitle = {XLIV Congreso Anual de la Sociedad Espa{\~n}ola de Ingenier{\'i}a Biom{\'e}dica
+               (CASEIB)},
+  address   = {Valencia, Spain},
+  year      = {2026}
+}
+```
+
+## Autor
+
+**José Ramón Mena Pérez** — Máster en Ingeniería Biomédica, UPV.  
+Dirigido por **Adrián Colomer** y **Alejandro Golfe San Martín** (CVBLab · HUMAN-tech · UPV).
